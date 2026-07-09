@@ -1,4 +1,4 @@
-FROM node:20-alpine AS build
+FROM node:22-alpine AS build
 RUN corepack enable
 WORKDIR /app
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.base.json ./
@@ -9,7 +9,7 @@ RUN pnpm install --frozen-lockfile
 COPY packages packages
 RUN pnpm -r build && pnpm prune --prod
 
-FROM node:20-alpine
+FROM node:22-alpine
 WORKDIR /app
 COPY --from=build /app/node_modules node_modules
 COPY --from=build /app/packages/core/dist packages/core/dist
