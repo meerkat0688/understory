@@ -1,0 +1,16 @@
+services:
+  okf-agent:
+    build: .
+    ports:
+      - "3800:3800"
+    volumes:
+      - ./sample-bundle:/bundle
+    environment:
+      BUNDLE_ROOT: /bundle
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      LLM_MODEL: ${LLM_MODEL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      LOCAL_BASE_URL: ${LOCAL_BASE_URL:-}
+      GIT_AUTOCOMMIT: ${GIT_AUTOCOMMIT:-false}
+    restart: unless-stopped

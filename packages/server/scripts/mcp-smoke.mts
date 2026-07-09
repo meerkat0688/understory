@@ -1,0 +1,30 @@
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+
+const transport = new StdioClientTransport({
+  command: "node",
+  args: ["/Users/anirbankar/Claude/projects/okf-agent/packages/server/dist/mcp/stdio.js"],
+  env: {
+    ...process.env,
+    BUNDLE_ROOT: process.env.SMOKE_BUNDLE!,
+  } as Record<string, string>,
+});
+
+const client = new Client({ name: "smoke", version: "0.0.1" });
+await client.connect(transport);
+
+const tools = await client.listTools();
+console.log("TOOLS:", tools.tools.map((t) => t.name).join(", "));
+
+const status = await client.callTool({ name: "kb_status", arguments: {} });
+console.log("STATUS:", (status.content as { text: string }[])[0].text);
+
+if (process.env.OPENROUTER_API_KEY) {
+  const q = await client.callTool({
+    name: "kb_query",
+    arguments: { question: "What is the billing API rate limit?" },
+  });
+  console.log("QUERY:", (q.content as { text: string }[])[0].text.slice(0, 400));
+}
+
+await client.close();
