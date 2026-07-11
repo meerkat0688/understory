@@ -14,7 +14,7 @@ export function mcpRouter(kb: KnowledgeBase): Router {
   const router = express.Router();
 
   const handle = async (req: Request, res: Response) => {
-    const server = buildMcpServer(kb);
+    const server = await buildMcpServer(kb);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined, // stateless
       enableJsonResponse: true, // one JSON reply per request — no long-lived SSE

@@ -64,6 +64,15 @@ claude mcp add okf-kb \
 
 Or point an HTTP MCP client at `http://host:3800/mcp`.
 
+### Seed memory
+
+A client LLM that only sees four bare tool names never gets the instinct to check memory. So at **session start** the server injects a compact overview of what the knowledge base contains (directories, concepts with types + descriptions, recent activity) through both channels that reach the model:
+
+1. the MCP initialize **`instructions`** field (clients like Claude put it in the system prompt), and
+2. the **`memory_query` tool description** — the universal fallback every tool-calling client loads.
+
+The seed regenerates fresh for every new session. After `memory_add` / `memory_update` in a long-lived (stdio) session, the tool description refreshes via `tools/list_changed`, so the session sees its own writes. Out-of-band edits (hand edits, other clients) are picked up on the next session.
+
 ## Docker
 
 ```bash

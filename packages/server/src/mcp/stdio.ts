@@ -17,7 +17,7 @@ if (!bundleRoot) {
 const kb = new KnowledgeBase(bundleRoot, {
   gitAutocommit: process.env.GIT_AUTOCOMMIT === "true",
 });
-const server = buildMcpServer(kb);
+const server = await buildMcpServer(kb);
 await server.connect(new StdioServerTransport());
 // stdio transport keeps the process alive; logs must go to stderr only.
 console.error(`[okf-mcp] serving bundle ${bundleRoot} over stdio`);
