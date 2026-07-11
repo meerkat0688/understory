@@ -5,6 +5,7 @@ import { regenerateIndexChain } from "./indexer.js";
 import { appendLog, readLog } from "./logger.js";
 import { searchBundle, listTypes, type SearchOptions } from "./search.js";
 import { validateBundle } from "./validate.js";
+import { lintBundle, type LintReport } from "./lint.js";
 import type {
   Concept,
   ConceptFrontmatter,
@@ -59,6 +60,11 @@ export class KnowledgeBase {
 
   validate(): Promise<ConformanceReport> {
     return validateBundle(this.bundle);
+  }
+
+  /** Graph health: orphaned concepts + broken links (deterministic, no LLM). */
+  lint(): Promise<LintReport> {
+    return lintBundle(this.bundle);
   }
 
   // ── Mutations (serialized; auto index + log + optional commit) ──────

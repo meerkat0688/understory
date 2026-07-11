@@ -12,6 +12,7 @@ import {
   regenerateIndex,
   readLog,
   searchBundle,
+  lintBundle,
 } from "../src/okf/index.js";
 
 let root: string;
@@ -199,6 +200,36 @@ describe("conformance (spec §9)", () => {
     await fs.rm(path.join(root, "bad.md"));
     const clean = await validateBundle(kb.bundle);
     expect(clean.conformant).toBe(true);
+  });
+});
+
+describe("lint (graph health)", () => {
+  it("flags orphans (no inbound links) and treats index catalogs as non-sources", async () => {
+    // hub is linked-to; spoke links out but nothing links back to it; lonely is isolated.
+    await kb.writeConcept("/hub.md", { type: "T", title: "Hub" }, "The central concept.", "add");
+    await kb.writeConcept("/spoke.md", { type: "T", title: "Spoke" }, "See [Hub](/hub.md).", "add");
+    await kb.writeConcept("/lonely.md", { type: "T", title: "Lonely" }, "Nothing here links out.", "add");
+
+    const report = await lintBundle(kb.bundle);
+    const orphanPaths = report.orphans.map((o) => o.path).sort();
+    // hub has an inbound link → not orphan. spoke + lonely have none → orphans.
+    // The generated index.md files must NOT count as inbound links.
+    expect(orphanPaths).toEqual(["/lonely.md", "/spoke.md"]);
+    expect(report.linkCount).toBe(1);
+    expect(report.healthy).toBe(false);
+  });
+
+  it("flags broken links and reports healthy when fully wired", async () => {
+    await kb.writeConcept("/a.md", { type: "T", title: "A" }, "Link to [B](/b.md).", "add");
+    let report = await lintBundle(kb.bundle);
+    expect(report.brokenLinks).toEqual([{ path: "/a.md", target: "/b.md" }]);
+
+    // Add B and a back-link so nothing is orphaned or broken.
+    await kb.writeConcept("/b.md", { type: "T", title: "B" }, "Back to [A](/a.md).", "add");
+    report = await lintBundle(kb.bundle);
+    expect(report.brokenLinks).toEqual([]);
+    expect(report.orphans).toEqual([]);
+    expect(report.healthy).toBe(true);
   });
 });
 

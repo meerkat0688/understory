@@ -129,8 +129,7 @@ export async function buildMcpServer(kb: KnowledgeBase): Promise<McpServer> {
       inputSchema: {},
     },
     async () => {
-      const report = await kb.validate();
-      const types = await kb.listTypes();
+      const [report, lint, types] = await Promise.all([kb.validate(), kb.lint(), kb.listTypes()]);
       return {
         content: [
           {
@@ -143,10 +142,72 @@ export async function buildMcpServer(kb: KnowledgeBase): Promise<McpServer> {
                 types,
                 errors: report.issues.filter((i) => i.severity === "error"),
                 warnings: report.issues.filter((i) => i.severity === "warning").length,
+                graph: {
+                  links: lint.linkCount,
+                  orphans: lint.orphans.length,
+                  brokenLinks: lint.brokenLinks.length,
+                  healthy: lint.healthy,
+                },
               },
               null,
               2
             ),
+          },
+        ],
+      };
+    }
+  );
+
+  server.registerTool(
+    "memory_maintain",
+    {
+      title: "Maintain / repair memory",
+      description:
+        "Health-check and repair the knowledge graph: an internal agent wires orphaned concepts (nothing links to them) into related concepts and fixes broken links. Run periodically to counter drift. No-op when the graph is already healthy.",
+      inputSchema: {},
+    },
+    async () => {
+      const before = await kb.lint();
+      if (before.healthy) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Memory is healthy — ${before.conceptCount} concepts, ${before.linkCount} links, no orphans, no broken links. Nothing to repair.`,
+            },
+          ],
+        };
+      }
+
+      const orphanList =
+        before.orphans.map((o) => `- ${o.path}${o.title ? ` (${o.title})` : ""}`).join("\n") ||
+        "(none)";
+      const brokenList =
+        before.brokenLinks.map((b) => `- ${b.path} → ${b.target} (missing)`).join("\n") ||
+        "(none)";
+      const instruction =
+        `Repair the knowledge graph. This is a maintenance task — use the write tools.\n\n` +
+        `ORPHANED CONCEPTS (no other concept links to them). For each, read it and the ` +
+        `concepts it relates to, then wire it in: patch a genuinely related concept to ` +
+        `reference it, and/or add outbound links from it to related concepts. Do NOT ` +
+        `invent relationships that don't exist — if an orphan genuinely relates to ` +
+        `nothing, leave it.\n${orphanList}\n\n` +
+        `BROKEN LINKS (target does not exist). Fix the path if the target was renamed/moved, ` +
+        `or remove the link if the target is gone.\n${brokenList}\n\n` +
+        `Follow the enrich / link-both-ways rules. Read concepts before editing.`;
+
+      const { summary, filesChanged } = await runMutation(kb, instruction);
+      await refreshSeed();
+      const after = await kb.lint();
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              `${summary}\n\n` +
+              `Graph health: orphans ${before.orphans.length} → ${after.orphans.length}, ` +
+              `broken links ${before.brokenLinks.length} → ${after.brokenLinks.length}.\n` +
+              `Files changed:\n${filesChanged.map((f) => `- ${f}`).join("\n") || "- none"}`,
           },
         ],
       };

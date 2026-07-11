@@ -63,6 +63,12 @@ export function buildReadTools(kb: KnowledgeBase) {
       inputSchema: z.object({}),
       execute: async () => formatTree(await kb.listTree()),
     }),
+    lint_knowledge: tool({
+      description:
+        "Graph health check: orphaned concepts (nothing links to them) and broken links. Use to find what needs wiring into the graph or fixing.",
+      inputSchema: z.object({}),
+      execute: async () => kb.lint(),
+    }),
   };
 }
 
