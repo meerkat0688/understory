@@ -54,9 +54,6 @@ export default function App() {
   const openConcept = useCallback((path: string) => {
     if (path === "/log.md") {
       setView({ kind: "log" });
-    } else if (path.endsWith("index.md")) {
-      // index.md is generated navigation; the tree already shows it.
-      return;
     } else {
       setView({ kind: "concept", path });
     }
