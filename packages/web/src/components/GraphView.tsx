@@ -72,7 +72,24 @@ export function GraphView({
   const [traces, setTraces] = useState<TraceSummary[]>([]);
   const [pathsOpen, setPathsOpen] = useState(true);
   const [activeTrace, setActiveTrace] = useState<QueryTrace | null>(null);
+  const [progress, setProgress] = useState(100); // path scrubber, 0–100
+  const [playing, setPlaying] = useState(false);
   const dragRef = useRef<{ mode: "node" | "pan"; node?: SimNode; lastX: number; lastY: number } | null>(null);
+
+  // Auto-play: sweep the scrubber to 100, then stop.
+  useEffect(() => {
+    if (!playing) return;
+    const timer = setInterval(() => {
+      setProgress((p) => {
+        if (p >= 100) {
+          setPlaying(false);
+          return 100;
+        }
+        return Math.min(100, p + 1.5);
+      });
+    }, 30);
+    return () => clearInterval(timer);
+  }, [playing]);
 
   // Build / rebuild the simulation when data changes.
   useEffect(() => {
@@ -150,6 +167,14 @@ export function GraphView({
   const selectTrace = async (id: string) => {
     const full = await api.trace(id);
     setActiveTrace(full);
+    setProgress(0);
+    setPlaying(true); // sweep the path in on selection
+  };
+
+  const closeTrace = () => {
+    setActiveTrace(null);
+    setPlaying(false);
+    setProgress(100);
   };
 
   // ── Interaction ──────────────────────────────────────────────────────
@@ -209,6 +234,9 @@ export function GraphView({
 
   const showAllLabels = nodes.length <= 60;
   const pathColor = activeTrace ? KIND_COLOR[activeTrace.kind] : "#64c8ff";
+  const hopCount = Math.max(0, visits.length - 1);
+  // Scrubber position mapped onto the hop chain: hop i draws over [i, i+1].
+  const hopProgress = (progress / 100) * hopCount;
   void tick;
 
   const dimmedBy = (path: string): boolean => {
@@ -254,7 +282,7 @@ export function GraphView({
             {traces.map((t) => (
               <button
                 key={t.id}
-                onClick={() => (activeTrace?.id === t.id ? setActiveTrace(null) : selectTrace(t.id))}
+                onClick={() => (activeTrace?.id === t.id ? closeTrace() : selectTrace(t.id))}
                 className={`block w-full rounded px-2 py-1.5 text-left hover:bg-zinc-800 ${
                   activeTrace?.id === t.id ? "bg-zinc-800 ring-1 ring-zinc-700" : ""
                 }`}
@@ -286,7 +314,7 @@ export function GraphView({
             </span>
             <span className="truncate text-zinc-200">{activeTrace.input}</span>
             <button
-              onClick={() => setActiveTrace(null)}
+              onClick={closeTrace}
               className="ml-auto shrink-0 rounded px-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
             >
               ✕
@@ -295,6 +323,37 @@ export function GraphView({
           <div className="mt-1 overflow-x-auto whitespace-nowrap font-mono text-[11px] text-zinc-400">
             {activeTrace.notation}
           </div>
+          {hopCount > 0 && (
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                onClick={() => {
+                  if (progress >= 100) setProgress(0);
+                  setPlaying(!playing);
+                }}
+                className="shrink-0 rounded px-1 text-sm hover:bg-zinc-800"
+                style={{ color: pathColor }}
+                title={playing ? "Pause" : "Play the traversal"}
+              >
+                {playing ? "❚❚" : "▶"}
+              </button>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={0.5}
+                value={progress}
+                onChange={(e) => {
+                  setPlaying(false);
+                  setProgress(Number(e.target.value));
+                }}
+                className="h-1 w-full cursor-pointer appearance-none rounded bg-zinc-700"
+                style={{ accentColor: pathColor }}
+              />
+              <span className="w-14 shrink-0 text-right font-mono text-[10px] text-zinc-500">
+                {Math.min(hopCount, hopProgress).toFixed(1)}/{hopCount} hops
+              </span>
+            </div>
+          )}
         </div>
       )}
 
@@ -335,8 +394,11 @@ export function GraphView({
             );
           })}
 
-          {/* Traversal overlay: numbered directed hops */}
+          {/* Traversal overlay: numbered directed hops, revealed by the scrubber */}
           {visits.slice(0, -1).map((v, i) => {
+            // Scrubber gate: hop i draws over hopProgress ∈ [i, i+1].
+            const f = Math.min(1, Math.max(0, hopProgress - i));
+            if (f <= 0) return null;
             const a = nodeByPath.get(v.path)!;
             const b = nodeByPath.get(visits[i + 1].path)!;
             const mx = (a.x + b.x) / 2;
@@ -348,6 +410,7 @@ export function GraphView({
             const off = 22 * (i % 2 === 0 ? 1 : -1);
             const cx = mx + (-dy / len) * off;
             const cy = my + (dx / len) * off;
+            const complete = f >= 1;
             return (
               <g key={`hop-${i}`} style={{ pointerEvents: "none" }}>
                 <path
@@ -355,14 +418,21 @@ export function GraphView({
                   fill="none"
                   stroke={pathColor}
                   strokeWidth={2 / view.k}
-                  strokeDasharray={`${6 / view.k} ${4 / view.k}`}
-                  markerEnd="url(#path-arrow)"
+                  // Partial hops draw along the curve (pathLength-normalized reveal);
+                  // completed hops keep the dashed style + arrowhead.
+                  pathLength={complete ? undefined : 1}
+                  strokeDasharray={complete ? `${6 / view.k} ${4 / view.k}` : `${f} ${1.001 - f}`}
+                  markerEnd={complete ? "url(#path-arrow)" : undefined}
                   opacity={0.9}
                 />
-                <circle cx={cx} cy={cy} r={9 / view.k} fill="#18181b" stroke={pathColor} strokeWidth={1.5 / view.k} />
-                <text x={cx} y={cy + 3.5 / view.k} textAnchor="middle" fill={pathColor} fontSize={10 / view.k} fontWeight={700}>
-                  {i + 1}
-                </text>
+                {complete && (
+                  <>
+                    <circle cx={cx} cy={cy} r={9 / view.k} fill="#18181b" stroke={pathColor} strokeWidth={1.5 / view.k} />
+                    <text x={cx} y={cy + 3.5 / view.k} textAnchor="middle" fill={pathColor} fontSize={10 / view.k} fontWeight={700}>
+                      {i + 1}
+                    </text>
+                  </>
+                )}
               </g>
             );
           })}
@@ -371,6 +441,9 @@ export function GraphView({
             const color = typeColors.get(n.type ?? "unknown") ?? "#64c8ff";
             const dim = dimmedBy(n.path);
             const onPath = pathSet.has(n.path);
+            // Ring lights up once the scrubber reaches this node's first visit.
+            const reachedIdx = visits.findIndex((v) => v.path === n.path);
+            const reached = onPath && reachedIdx !== -1 && hopProgress >= reachedIdx;
             const isSearchHit = activeTrace != null && !onPath && searchHitSet.has(n.path);
             const r = radius(n);
             return (
@@ -390,7 +463,7 @@ export function GraphView({
                 {n.links === 0 && (
                   <circle r={r + 3} fill="none" stroke="#ef4444" strokeWidth={1.5 / view.k} opacity={0.8} />
                 )}
-                {onPath && (
+                {reached && (
                   <circle r={r + 5} fill="none" stroke={pathColor} strokeWidth={2 / view.k} opacity={0.9} />
                 )}
                 {isSearchHit && (
