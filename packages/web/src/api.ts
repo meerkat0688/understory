@@ -75,6 +75,13 @@ export interface AppConfig {
   providers: string[];
   defaultProvider: string;
   defaultModel: string;
+  chat: {
+    contextWindowTokens: number;
+    contextSafetyTokens: number;
+    historyMaxTokens: number;
+    importModeThresholdTokens: number;
+    maxRequestBytes: number;
+  };
 }
 
 async function get<T>(url: string): Promise<T> {

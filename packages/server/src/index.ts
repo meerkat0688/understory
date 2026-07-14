@@ -1,7 +1,7 @@
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import express from "express";
+import express, { type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
 import { KnowledgeBase } from "@understory/core";
 import { mcpRouter } from "./mcp/http.js";
@@ -37,9 +37,7 @@ app.use(
     methods: ["GET", "POST", "DELETE", "OPTIONS"],
   })
 );
-app.use(express.json({ limit: "4mb" }));
-
-app.use("/mcp", mcpRouter(kb));
+app.use("/mcp", express.json({ limit: "4mb" }), mcpRouter(kb));
 app.use("/api", browseRouter(kb));
 app.use("/api", chatRouter(kb));
 
@@ -51,6 +49,33 @@ if (existsSync(webDist)) {
     res.sendFile(path.join(webDist, "index.html"));
   });
 }
+
+app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  const details = error as { type?: string; status?: number; message?: string };
+  if (details.type === "entity.too.large" || details.status === 413) {
+    res.status(413).json({
+      error: {
+        code: "PAYLOAD_TOO_LARGE",
+        message: "The chat request exceeds the configured request-size limit.",
+      },
+    });
+    return;
+  }
+  if (details.type === "entity.parse.failed") {
+    res.status(400).json({
+      error: {
+        code: "INVALID_CHAT_REQUEST",
+        message: "The request body is not valid JSON.",
+      },
+    });
+    return;
+  }
+
+  console.error(`[understory] request failed: ${details.message ?? String(error)}`);
+  res.status(500).json({
+    error: { code: "INTERNAL_ERROR", message: "The server could not complete this request." },
+  });
+});
 
 const port = Number(process.env.PORT ?? 3800);
 app.listen(port, "0.0.0.0", () => {

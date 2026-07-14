@@ -1,6 +1,7 @@
 import express, { type Router } from "express";
 import { BundleError, TraceStore, type KnowledgeBase } from "@understory/core";
 import { availableProviders, loadProviderConfig } from "@understory/core";
+import { loadChatHistoryConfig } from "@understory/core";
 
 /** Deterministic browse API — no LLM involved, browsing never costs tokens. */
 export function browseRouter(kb: KnowledgeBase): Router {
@@ -75,10 +76,12 @@ export function browseRouter(kb: KnowledgeBase): Router {
 
   router.get("/config", (_req, res) => {
     const config = loadProviderConfig();
+    const chat = loadChatHistoryConfig();
     res.json({
       providers: availableProviders(),
       defaultProvider: config.provider,
       defaultModel: config.model,
+      chat,
     });
   });
 
