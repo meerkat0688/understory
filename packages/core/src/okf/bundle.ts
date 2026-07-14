@@ -25,21 +25,29 @@ export class BundleError extends Error {
  */
 export class Bundle {
   readonly root: string;
+  private readonly realRoot: Promise<string>;
 
   constructor(root: string) {
     this.root = path.resolve(root);
+    this.realRoot = fs.realpath(this.root);
   }
 
   /** Resolve a bundle-relative path to an absolute one, rejecting escapes. */
   resolve(bundlePath: string): string {
-    // Already an OS-absolute path inside the bundle (e.g. from a directory walk).
-    if (
-      path.isAbsolute(bundlePath) &&
-      (bundlePath === this.root || bundlePath.startsWith(this.root + path.sep))
-    ) {
-      return path.resolve(bundlePath);
+    if (typeof bundlePath !== "string" || bundlePath.includes("\0") || !bundlePath.startsWith("/")) {
+      throw new BundleError(`Invalid bundle path: ${bundlePath}`, "OUTSIDE_BUNDLE");
     }
-    const cleaned = bundlePath.replace(/^\/+/, "");
+    if (bundlePath.includes("\\") || /^[A-Za-z]:/.test(bundlePath.slice(1))) {
+      throw new BundleError(`Invalid bundle path: ${bundlePath}`, "OUTSIDE_BUNDLE");
+    }
+    if (bundlePath === this.root || bundlePath.startsWith(this.root + path.sep)) {
+      throw new BundleError("OS filesystem paths are not accepted", "OUTSIDE_BUNDLE");
+    }
+    const segments = bundlePath.split("/");
+    if (segments.some((segment) => segment === ".." || segment === ".")) {
+      throw new BundleError(`Path escapes bundle root: ${bundlePath}`, "OUTSIDE_BUNDLE");
+    }
+    const cleaned = segments.filter(Boolean).join(path.sep);
     const abs = path.resolve(this.root, cleaned);
     if (abs !== this.root && !abs.startsWith(this.root + path.sep)) {
       throw new BundleError(`Path escapes bundle root: ${bundlePath}`, "OUTSIDE_BUNDLE");
@@ -50,8 +58,67 @@ export class Bundle {
   /** Normalize any input to a canonical bundle-relative path starting with "/". */
   toBundlePath(inputPath: string): string {
     const abs = this.resolve(inputPath);
-    const rel = path.relative(this.root, abs);
-    return "/" + rel.split(path.sep).join("/");
+    return this.fromAbsolute(abs);
+  }
+
+  private fromAbsolute(abs: string): string {
+    const normalized = path.resolve(abs);
+    if (normalized !== this.root && !normalized.startsWith(this.root + path.sep)) {
+      throw new BundleError(`Path escapes bundle root`, "OUTSIDE_BUNDLE");
+    }
+    const rel = path.relative(this.root, normalized);
+    return rel ? "/" + rel.split(path.sep).join("/") : "/";
+  }
+
+  private async assertRealContained(abs: string): Promise<string> {
+    const [root, target] = await Promise.all([this.realRoot, fs.realpath(abs)]);
+    if (target !== root && !target.startsWith(root + path.sep)) {
+      throw new BundleError("Path resolves outside bundle root", "OUTSIDE_BUNDLE");
+    }
+    return target;
+  }
+
+  private async verifiedWriteDirectory(abs: string): Promise<string> {
+    const root = await this.realRoot;
+    const rel = path.relative(this.root, path.dirname(abs));
+    let current = this.root;
+    for (const segment of rel.split(path.sep).filter(Boolean)) {
+      const next = path.join(current, segment);
+      try {
+        const stat = await fs.lstat(next);
+        if (stat.isSymbolicLink() || !stat.isDirectory()) {
+          throw new BundleError("Write parent is not a real directory", "OUTSIDE_BUNDLE");
+        }
+      } catch (err) {
+        if (err instanceof BundleError) throw err;
+        await fs.mkdir(next);
+      }
+      current = next;
+    }
+    const real = await fs.realpath(current);
+    if (real !== root && !real.startsWith(root + path.sep)) {
+      throw new BundleError("Write parent resolves outside bundle root", "OUTSIDE_BUNDLE");
+    }
+    try {
+      if ((await fs.lstat(abs)).isSymbolicLink()) {
+        throw new BundleError("Refusing to replace a symlink", "OUTSIDE_BUNDLE");
+      }
+    } catch (err) {
+      if (err instanceof BundleError) throw err;
+    }
+    return current;
+  }
+
+  async writeFileAtomic(bundlePath: string, content: string): Promise<void> {
+    const abs = this.resolve(bundlePath);
+    const dir = await this.verifiedWriteDirectory(abs);
+    const tmp = path.join(dir, `.${path.basename(abs)}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`);
+    try {
+      await fs.writeFile(tmp, content, { encoding: "utf-8", flag: "wx" });
+      await fs.rename(tmp, abs);
+    } finally {
+      await fs.unlink(tmp).catch(() => {});
+    }
   }
 
   private assertConceptPath(bundlePath: string): void {
@@ -69,7 +136,7 @@ export class Bundle {
 
   async exists(bundlePath: string): Promise<boolean> {
     try {
-      await fs.access(this.resolve(bundlePath));
+      await this.assertRealContained(this.resolve(bundlePath));
       return true;
     } catch {
       return false;
@@ -78,11 +145,13 @@ export class Bundle {
 
   async readConcept(bundlePath: string): Promise<Concept> {
     const canonical = this.toBundlePath(bundlePath);
+    this.assertConceptPath(canonical);
     const abs = this.resolve(canonical);
     let raw: string;
     try {
-      raw = await fs.readFile(abs, "utf-8");
-    } catch {
+      raw = await fs.readFile(await this.assertRealContained(abs), "utf-8");
+    } catch (err) {
+      if (err instanceof BundleError) throw err;
       throw new BundleError(`Concept not found: ${canonical}`, "NOT_FOUND");
     }
     const { frontmatter, body } = parseDoc(raw);
@@ -92,10 +161,18 @@ export class Bundle {
   async readFileRaw(bundlePath: string): Promise<string> {
     const abs = this.resolve(bundlePath);
     try {
-      return await fs.readFile(abs, "utf-8");
-    } catch {
+      return await fs.readFile(await this.assertRealContained(abs), "utf-8");
+    } catch (err) {
+      if (err instanceof BundleError) throw err;
       throw new BundleError(`File not found: ${bundlePath}`, "NOT_FOUND");
     }
+  }
+
+  async listFileNames(bundlePath: string): Promise<string[]> {
+    const dir = await this.assertRealContained(this.resolve(bundlePath));
+    return (await fs.readdir(dir, { withFileTypes: true }))
+      .filter((entry) => entry.isFile() && !entry.isSymbolicLink())
+      .map((entry) => entry.name);
   }
 
   async writeConcept(
@@ -116,8 +193,7 @@ export class Bundle {
       timestamp: new Date().toISOString(),
     };
     const abs = this.resolve(canonical);
-    await fs.mkdir(path.dirname(abs), { recursive: true });
-    await fs.writeFile(abs, serializeDoc(stamped, body), "utf-8");
+    await this.writeFileAtomic(canonical, serializeDoc(stamped, body));
     return { path: canonical, frontmatter: stamped, body, raw: serializeDoc(stamped, body) };
   }
 
@@ -153,8 +229,11 @@ export class Bundle {
     this.assertConceptPath(canonical);
     const abs = this.resolve(canonical);
     try {
+      await this.assertRealContained(abs);
+      if ((await fs.lstat(abs)).isSymbolicLink()) throw new BundleError("Refusing to delete a symlink", "OUTSIDE_BUNDLE");
       await fs.unlink(abs);
-    } catch {
+    } catch (err) {
+      if (err instanceof BundleError) throw err;
       throw new BundleError(`Concept not found: ${canonical}`, "NOT_FOUND");
     }
   }
@@ -162,9 +241,11 @@ export class Bundle {
   /** All concept files (recursive), as bundle-relative paths. */
   async listConceptPaths(dir = "/"): Promise<string[]> {
     const out: string[] = [];
-    await this.walk(this.resolve(dir), (abs, name) => {
+    const start = this.resolve(dir);
+    await this.assertRealContained(start);
+    await this.walk(start, (abs, name) => {
       if (name.endsWith(".md") && !RESERVED_FILENAMES.has(name)) {
-        out.push(this.toBundlePath(abs));
+        out.push(this.fromAbsolute(abs));
       }
     });
     return out.sort();
@@ -173,19 +254,21 @@ export class Bundle {
   /** Immediate subdirectories of a directory. */
   async listSubdirectories(dir = "/"): Promise<string[]> {
     const abs = this.resolve(dir);
+    await this.assertRealContained(abs);
     const entries = await fs.readdir(abs, { withFileTypes: true });
     return entries
-      .filter((e) => e.isDirectory() && !e.name.startsWith("."))
-      .map((e) => this.toBundlePath(path.join(abs, e.name)))
+      .filter((e) => e.isDirectory() && !e.isSymbolicLink() && !e.name.startsWith("."))
+      .map((e) => this.fromAbsolute(path.join(abs, e.name)))
       .sort();
   }
 
   async listTree(dir = "/"): Promise<TreeNode> {
     const abs = this.resolve(dir);
+    await this.assertRealContained(abs);
     const name = abs === this.root ? "/" : path.basename(abs);
     const node: TreeNode = {
       name,
-      path: this.toBundlePath(abs),
+      path: this.fromAbsolute(abs),
       kind: "directory",
       children: [],
     };
@@ -193,13 +276,14 @@ export class Bundle {
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
       if (entry.name.startsWith(".")) continue;
       const childAbs = path.join(abs, entry.name);
+      if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory()) {
-        node.children!.push(await this.listTree(this.toBundlePath(childAbs)));
+        node.children!.push(await this.listTree(this.fromAbsolute(childAbs)));
       } else if (entry.name.endsWith(".md")) {
         if (RESERVED_FILENAMES.has(entry.name)) {
           node.children!.push({
             name: entry.name,
-            path: this.toBundlePath(childAbs),
+            path: this.fromAbsolute(childAbs),
             kind: "reserved",
           });
         } else {
@@ -217,7 +301,7 @@ export class Bundle {
           }
           node.children!.push({
             name: entry.name,
-            path: this.toBundlePath(childAbs),
+            path: this.fromAbsolute(childAbs),
             kind: "concept",
             ...fmSummary,
           });
@@ -240,6 +324,7 @@ export class Bundle {
     for (const entry of entries) {
       if (entry.name.startsWith(".")) continue;
       const child = path.join(absDir, entry.name);
+      if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory()) await this.walk(child, visit);
       else visit(child, entry.name);
     }

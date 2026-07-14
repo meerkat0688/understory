@@ -3,6 +3,8 @@ import type { Request, Response, Router } from "express";
 import express from "express";
 import type { KnowledgeBase } from "@understory/core";
 import { buildMcpServer } from "./server.js";
+import crypto from "node:crypto";
+import { withLlmSlot } from "../llm-control.js";
 
 /**
  * MCP streamable-HTTP at /mcp. Stateless: a fresh McpServer + transport per
@@ -14,7 +16,8 @@ export function mcpRouter(kb: KnowledgeBase): Router {
   const router = express.Router();
 
   const handle = async (req: Request, res: Response) => {
-    const server = await buildMcpServer(kb);
+    const identity = crypto.createHash("sha256").update(req.get("authorization") || req.ip || "unknown").digest("hex");
+    const server = await buildMcpServer(kb, (fn) => withLlmSlot(identity, fn));
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined, // stateless
       enableJsonResponse: true, // one JSON reply per request — no long-lived SSE

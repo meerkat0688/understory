@@ -62,7 +62,7 @@ export async function discoverLlamaCppModel(baseURL: string): Promise<string> {
   let cached = discoveryCache.get(url);
   if (!cached) {
     cached = (async () => {
-      const res = await fetch(`${url}/models`);
+      const res = await fetch(`${url}/models`, { signal: AbortSignal.timeout(10_000) });
       if (!res.ok) {
         throw new Error(`llama-server model discovery failed: ${res.status} at ${url}/models`);
       }

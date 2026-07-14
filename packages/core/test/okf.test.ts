@@ -76,6 +76,34 @@ describe("sandbox", () => {
     const bundle = new Bundle(root);
     expect(bundle.resolve("/a/b/c.md")).toBe(path.join(root, "a/b/c.md"));
   });
+
+  it("rejects traversal, filesystem absolute paths, NULs, and platform separators", () => {
+    const bundle = new Bundle(root);
+    for (const value of ["/bundle/../etc/passwd", "/bundle/sub/../../outside", "/../../etc/passwd", root, "/a\\b.md", "/a\0b.md"]) {
+      expect(() => bundle.resolve(value)).toThrow(BundleError);
+    }
+  });
+
+  it("rejects symlinked reads, writes, deletes, and parent directories", async () => {
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "okf-outside-"));
+    try {
+      await fs.writeFile(path.join(outside, "secret.md"), "---\ntype: T\n---\nsecret");
+      await fs.symlink(path.join(outside, "secret.md"), path.join(root, "linked.md"));
+      await expect(kb.readConcept("/linked.md")).rejects.toMatchObject({ code: "OUTSIDE_BUNDLE" });
+      await expect(kb.writeConcept("/linked.md", { type: "T" }, "changed", "x")).rejects.toMatchObject({ code: "OUTSIDE_BUNDLE" });
+      await expect(kb.deleteConcept("/linked.md", "x")).rejects.toMatchObject({ code: "OUTSIDE_BUNDLE" });
+      await fs.symlink(outside, path.join(root, "escape"));
+      await expect(kb.writeConcept("/escape/new.md", { type: "T" }, "x", "x")).rejects.toMatchObject({ code: "OUTSIDE_BUNDLE" });
+      expect(await fs.readFile(path.join(outside, "secret.md"), "utf-8")).toContain("secret");
+    } finally {
+      await fs.rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("supports nonexistent nested write paths", async () => {
+    await kb.writeConcept("/new/deep/concept.md", { type: "T" }, "body", "add");
+    await expect(kb.readConcept("/new/deep/concept.md")).resolves.toMatchObject({ body: expect.stringContaining("body") });
+  });
 });
 
 describe("index regeneration (spec §6)", () => {

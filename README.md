@@ -24,13 +24,15 @@ services:
   understory:
     image: ghcr.io/thecodacus/understory:latest
     ports:
-      - "3800:3800"
+      - "127.0.0.1:3800:3800"
     volumes:
       # Your memory lives here as plain markdown — a named volume, or point
       # a bind mount (e.g. ./my-memory:/bundle) at any OKF bundle.
       - understory-memory:/bundle
     environment:
       BUNDLE_ROOT: /bundle
+      HOST: 0.0.0.0
+      API_BEARER_TOKEN: replace-with-a-long-random-token
       # Pick ONE provider:
       # 1) Local llama.cpp / llama-swap (model auto-discovered; start llama-server with --jinja)
       LLM_PROVIDER: llamacpp
@@ -116,7 +118,22 @@ claude mcp add ustory \
   -- node /path/to/understory/packages/server/dist/mcp/stdio.js
 ```
 
-Or point an HTTP MCP client at `http://host:3800/mcp`.
+Or point an HTTP MCP client at `http://host:3800/mcp` and configure its
+`Authorization: Bearer <API_BEARER_TOKEN>` header.
+
+### Network security
+
+The server binds to `127.0.0.1` by default. Binding `HOST` to a non-loopback
+address requires `API_BEARER_TOKEN`; `UNSAFE_ALLOW_UNAUTHENTICATED=true` is an
+explicit development-only escape hatch. The web UI stores the token in
+`sessionStorage`. Set `CORS_ORIGINS` to a comma-separated exact allowlist when
+the browser UI is hosted on a different origin.
+
+The bundled Compose file listens only on the host loopback interface. To expose
+it on a trusted LAN, deliberately change the published address and keep bearer
+authentication enabled. For any exposure beyond a trusted machine or LAN, put
+the service behind a TLS-terminating reverse proxy; bearer tokens must never be
+sent over plaintext networks.
 
 ### Seed memory
 
@@ -145,4 +162,7 @@ pnpm --filter @understory/server exec tsx scripts/mcp-smoke.mts   # MCP stdio ro
 
 ## Environment
 
-See [.env.example](.env.example). `BUNDLE_ROOT` is required; `GIT_AUTOCOMMIT=true` commits every mutation.
+`BUNDLE_ROOT` is required; `GIT_AUTOCOMMIT=true` commits every mutation. Security
+and resource controls include `HOST`, `API_BEARER_TOKEN`, `CORS_ORIGINS`,
+`LLM_CONCURRENCY`, `LLM_PER_TOKEN_CONCURRENCY`, `LLM_MAX_QUEUE`, and
+`LLM_TIMEOUT_MS`.

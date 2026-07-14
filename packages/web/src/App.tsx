@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type AppConfig, type Concept, type ConformanceReport, type LogEntry, type SearchHit, type TreeNode } from "./api";
+import { api, getApiToken, setApiToken, type AppConfig, type Concept, type ConformanceReport, type LogEntry, type SearchHit, type TreeNode } from "./api";
 import { Tree } from "./components/Tree";
 import { ConceptView } from "./components/ConceptView";
 import { LogView } from "./components/LogView";
@@ -13,6 +13,8 @@ type View =
   | { kind: "empty" };
 
 export default function App() {
+  const [authenticated, setAuthenticated] = useState(Boolean(getApiToken()));
+  const [tokenInput, setTokenInput] = useState("");
   const [tree, setTree] = useState<TreeNode | null>(null);
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [report, setReport] = useState<ConformanceReport | null>(null);
@@ -24,6 +26,10 @@ export default function App() {
   const [chatOpen, setChatOpen] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!getApiToken()) api.config().then(() => setAuthenticated(true)).catch(() => {});
+  }, []);
+
   const refresh = useCallback(() => {
     api.tree().then(setTree).catch((e) => setError(String(e)));
     api.validate().then(setReport).catch(() => {});
@@ -31,9 +37,16 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const unauthorized = () => setAuthenticated(false);
+    window.addEventListener("understory:unauthorized", unauthorized);
+    return () => window.removeEventListener("understory:unauthorized", unauthorized);
+  }, []);
+
+  useEffect(() => {
+    if (!authenticated) return;
     refresh();
     api.config().then(setConfig).catch(() => {});
-  }, [refresh]);
+  }, [refresh, authenticated]);
 
   useEffect(() => {
     if (view.kind === "concept") {
@@ -67,6 +80,24 @@ export default function App() {
     setError(null);
     setQuery("");
   }, []);
+
+  if (!authenticated) return (
+    <div className="flex h-screen items-center justify-center bg-zinc-950">
+      <form className="w-80 rounded-xl border border-zinc-800 bg-zinc-900 p-6" onSubmit={async (e) => {
+        e.preventDefault();
+        setApiToken(tokenInput.trim());
+        try { await api.config(); setAuthenticated(true); setError(null); }
+        catch { setApiToken(""); setError("Invalid bearer token"); }
+      }}>
+        <h1 className="text-lg font-semibold text-cyan-300">understory</h1>
+        <p className="mt-2 text-sm text-zinc-400">Enter the API bearer token for this server.</p>
+        <input type="password" autoFocus value={tokenInput} onChange={(e) => setTokenInput(e.target.value)}
+          className="mt-4 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm" placeholder="Bearer token" />
+        {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
+        <button className="mt-4 w-full rounded-lg bg-cyan-700 px-3 py-2 text-sm font-medium">Connect</button>
+      </form>
+    </div>
+  );
 
   return (
     <div className="flex h-screen">

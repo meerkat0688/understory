@@ -10,6 +10,7 @@ const MAX_STEPS = 12;
 export interface AgentOptions {
   provider?: ProviderName;
   model?: string;
+  abortSignal?: AbortSignal;
 }
 
 export interface QueryResult {
@@ -38,6 +39,11 @@ function traceStore(kb: KnowledgeBase): TraceStore {
   return new TraceStore(kb.bundle.root);
 }
 
+function requestSignal(signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(Math.max(1_000, Number(process.env.LLM_TIMEOUT_MS || 120_000)));
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
 /** Read-only Q&A over the bundle. */
 export async function runQuery(
   kb: KnowledgeBase,
@@ -52,6 +58,8 @@ export async function runQuery(
     prompt: question,
     tools: buildReadTools(kb, recorder),
     stopWhen: stepCountIs(MAX_STEPS),
+    abortSignal: requestSignal(options.abortSignal),
+    maxOutputTokens: 4096,
   });
   const trace = recorder.finalize("query", question, result.text);
   await traceStore(kb).save(trace);
@@ -74,6 +82,8 @@ export async function runMutation(
     tools: { ...buildReadTools(kb, recorder), ...buildWriteTools(kb, filesChanged, recorder) },
     stopWhen: stepCountIs(MAX_STEPS),
     temperature: 0.2,
+    abortSignal: requestSignal(options.abortSignal),
+    maxOutputTokens: 4096,
   });
   const trace = recorder.finalize("mutation", instruction, result.text);
   await traceStore(kb).save(trace);
@@ -110,6 +120,8 @@ export async function streamChat(
     messages,
     tools: { ...buildReadTools(kb, recorder), ...buildWriteTools(kb, filesChanged, recorder) },
     stopWhen: stepCountIs(MAX_STEPS),
+    abortSignal: requestSignal(options.abortSignal),
+    maxOutputTokens: 4096,
     onFinish: async ({ text }) => {
       // Persist only turns that actually touched the bundle.
       if (recorder.steps.length > 0) {

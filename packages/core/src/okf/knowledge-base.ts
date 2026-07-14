@@ -31,6 +31,7 @@ export class KnowledgeBase {
   readonly bundle: Bundle;
   private readonly git: SimpleGit | null;
   private mutationQueue: Promise<unknown> = Promise.resolve();
+  private readonly readCache = new Map<string, Promise<unknown>>();
 
   constructor(bundleRoot: string, private readonly options: KnowledgeBaseOptions = {}) {
     this.bundle = new Bundle(bundleRoot);
@@ -44,7 +45,7 @@ export class KnowledgeBase {
   }
 
   listTree(): Promise<TreeNode> {
-    return this.bundle.listTree();
+    return this.cached("tree", () => this.bundle.listTree());
   }
 
   search(query: string, options?: SearchOptions): Promise<SearchHit[]> {
@@ -52,7 +53,7 @@ export class KnowledgeBase {
   }
 
   listTypes(): Promise<string[]> {
-    return listTypes(this.bundle);
+    return this.cached("types", () => listTypes(this.bundle));
   }
 
   readLog(): Promise<LogEntry[]> {
@@ -60,17 +61,27 @@ export class KnowledgeBase {
   }
 
   validate(): Promise<ConformanceReport> {
-    return validateBundle(this.bundle);
+    return this.cached("validate", () => validateBundle(this.bundle));
   }
 
   /** Graph health: orphaned concepts + broken links (deterministic, no LLM). */
   lint(): Promise<LintReport> {
-    return lintBundle(this.bundle);
+    return this.cached("lint", () => lintBundle(this.bundle));
   }
 
   /** Inter-concept link graph (nodes + edges) for visualization. */
   graph(): Promise<GraphData> {
-    return buildGraph(this.bundle);
+    return this.cached("graph", () => buildGraph(this.bundle));
+  }
+
+  private cached<T>(key: string, load: () => Promise<T>): Promise<T> {
+    let value = this.readCache.get(key) as Promise<T> | undefined;
+    if (!value) {
+      value = load();
+      this.readCache.set(key, value);
+      value.catch(() => this.readCache.delete(key));
+    }
+    return value;
   }
 
   // ── Mutations (serialized; auto index + log + optional commit) ──────
@@ -123,6 +134,7 @@ export class KnowledgeBase {
     await regenerateIndexChain(this.bundle, path.posix.dirname(conceptPath));
     const linked = `[${conceptPath.split("/").pop()}](${conceptPath})`;
     await appendLog(this.bundle, action, logSummary || `${action} of ${linked}.`);
+    this.readCache.clear();
     if (this.git) {
       try {
         await this.git.add(".");

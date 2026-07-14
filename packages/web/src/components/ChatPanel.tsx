@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import ReactMarkdown from "react-markdown";
-import type { AppConfig } from "../api";
+import { authenticatedFetch, getApiToken, type AppConfig } from "../api";
 
 const WRITE_TOOLS = new Set(["write_concept", "patch_concept", "delete_concept"]);
 
@@ -25,6 +25,8 @@ export function ChatPanel({
     transport: new DefaultChatTransport({
       api: "/api/chat",
       body: () => ({ provider }),
+      headers: () => ({ Authorization: `Bearer ${getApiToken()}` }),
+      fetch: authenticatedFetch,
     }),
     onFinish: () => onMutation(), // refresh browse pane; agent may have written files
   });

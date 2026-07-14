@@ -1,5 +1,3 @@
-import { promises as fs } from "node:fs";
-import path from "node:path";
 import type { Bundle } from "./bundle.js";
 import type { LogAction, LogEntry } from "./types.js";
 
@@ -14,13 +12,12 @@ export async function appendLog(
   action: LogAction,
   summary: string
 ): Promise<void> {
-  const logPath = path.join(bundle.root, "log.md");
   const today = new Date().toISOString().slice(0, 10);
   const bullet = `* **${action}**: ${summary.trim()}`;
 
   let existing = "";
   try {
-    existing = await fs.readFile(logPath, "utf-8");
+    existing = await bundle.readFileRaw("/log.md");
   } catch {
     // No log yet.
   }
@@ -49,14 +46,14 @@ export async function appendLog(
       }
     }
   }
-  await fs.writeFile(logPath, content, "utf-8");
+  await bundle.writeFileAtomic("/log.md", content);
 }
 
 /** Parse the root log.md into structured entries (best-effort, permissive). */
 export async function readLog(bundle: Bundle): Promise<LogEntry[]> {
   let raw: string;
   try {
-    raw = await fs.readFile(path.join(bundle.root, "log.md"), "utf-8");
+    raw = await bundle.readFileRaw("/log.md");
   } catch {
     return [];
   }

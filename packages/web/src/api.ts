@@ -78,9 +78,27 @@ export interface AppConfig {
 }
 
 async function get<T>(url: string): Promise<T> {
-  const res = await fetch(url);
+  const res = await authenticatedFetch(url);
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   return res.json();
+}
+
+let token = sessionStorage.getItem("understory_token") || "";
+export function setApiToken(value: string): void {
+  token = value;
+  if (value) sessionStorage.setItem("understory_token", value);
+  else sessionStorage.removeItem("understory_token");
+}
+export function getApiToken(): string { return token; }
+export async function authenticatedFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const response = await fetch(input, { ...init, headers });
+  if (response.status === 401) {
+    setApiToken("");
+    window.dispatchEvent(new Event("understory:unauthorized"));
+  }
+  return response;
 }
 
 export const api = {

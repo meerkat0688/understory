@@ -14,7 +14,10 @@ import { buildSeedMemory, seedInstructions } from "./seed.js";
  * fallback; every tool-calling client loads descriptions). Without it the
  * client model has no signal that memory might hold an answer.
  */
-export async function buildMcpServer(kb: KnowledgeBase): Promise<McpServer> {
+export async function buildMcpServer(
+  kb: KnowledgeBase,
+  guard: <T>(fn: () => Promise<T>) => Promise<T> = (fn) => fn()
+): Promise<McpServer> {
   // Seed generation must never prevent the server from starting — a missing
   // or empty bundle root degrades to a minimal seed, not a crash.
   const seed = await buildSeedMemory(kb).catch((err: Error) => {
@@ -37,10 +40,10 @@ export async function buildMcpServer(kb: KnowledgeBase): Promise<McpServer> {
     {
       title: "Query the knowledge base",
       description: queryDescription(seed),
-      inputSchema: { question: z.string().describe("The question to answer") },
+      inputSchema: { question: z.string().max(32_000).describe("The question to answer") },
     },
     async ({ question }) => {
-      const { answer } = await runQuery(kb, question);
+      const { answer } = await guard(() => runQuery(kb, question));
       return { content: [{ type: "text", text: answer }] };
     }
   );
@@ -68,7 +71,7 @@ export async function buildMcpServer(kb: KnowledgeBase): Promise<McpServer> {
       description:
         "Provide free-form knowledge (facts, docs, decisions, runbooks). An internal agent searches for overlap, then creates or extends OKF concepts; indexes and the update log are maintained automatically.",
       inputSchema: {
-        content: z.string().describe("The knowledge to record, in any prose form"),
+        content: z.string().max(32_000).describe("The knowledge to record, in any prose form"),
         suggested_path: z
           .string()
           .optional()
@@ -89,7 +92,7 @@ export async function buildMcpServer(kb: KnowledgeBase): Promise<McpServer> {
         `must use the write tools.\n\n` +
         `KNOWLEDGE TO RECORD:\n${content}` +
         (suggested_path ? `\n\nIf it fits, place new content at ${suggested_path}.` : "");
-      const { summary, filesChanged } = await runMutation(kb, instruction);
+      const { summary, filesChanged } = await guard(() => runMutation(kb, instruction));
       await refreshSeed();
       return {
         content: [
@@ -106,11 +109,11 @@ export async function buildMcpServer(kb: KnowledgeBase): Promise<McpServer> {
       description:
         "Instruct a change to existing knowledge (correct a fact, deprecate a concept, restructure). An internal agent locates the concepts and applies targeted edits.",
       inputSchema: {
-        instruction: z.string().describe("What to change, in natural language"),
+        instruction: z.string().max(32_000).describe("What to change, in natural language"),
       },
     },
     async ({ instruction }) => {
-      const { summary, filesChanged } = await runMutation(kb, instruction);
+      const { summary, filesChanged } = await guard(() => runMutation(kb, instruction));
       await refreshSeed();
       return {
         content: [
@@ -196,7 +199,7 @@ export async function buildMcpServer(kb: KnowledgeBase): Promise<McpServer> {
         `or remove the link if the target is gone.\n${brokenList}\n\n` +
         `Follow the enrich / link-both-ways rules. Read concepts before editing.`;
 
-      const { summary, filesChanged } = await runMutation(kb, instruction);
+      const { summary, filesChanged } = await guard(() => runMutation(kb, instruction));
       await refreshSeed();
       const after = await kb.lint();
       return {

@@ -20,7 +20,7 @@ COPY --from=build /app/packages/server/package.json packages/server/
 COPY --from=build /app/packages/server/node_modules packages/server/node_modules
 COPY --from=build /app/packages/web/dist packages/web/dist
 
-ENV BUNDLE_ROOT=/bundle PORT=3800
+ENV BUNDLE_ROOT=/bundle PORT=3800 HOST=0.0.0.0
 EXPOSE 3800
 VOLUME /bundle
 CMD ["node", "packages/server/dist/index.js"]

@@ -12,15 +12,16 @@ import type { Bundle } from "./bundle.js";
 export async function regenerateIndex(bundle: Bundle, dir = "/"): Promise<string> {
   const absDir = bundle.resolve(dir);
   const isRoot = absDir === bundle.root;
-  const entries = await fs.readdir(absDir, { withFileTypes: true });
+  const entries = await fs.readdir(await fs.realpath(absDir), { withFileTypes: true });
 
   const conceptLines: string[] = [];
   const dirLines: string[] = [];
 
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     if (entry.name.startsWith(".")) continue;
+    if (entry.isSymbolicLink()) continue;
     if (entry.isDirectory()) {
-      const summary = await summarizeDirectory(path.join(absDir, entry.name));
+      const summary = await summarizeDirectory(bundle, `${dir === "/" ? "" : dir}/${entry.name}`);
       dirLines.push(`* [${entry.name}](${entry.name}/) - ${summary}`);
       continue;
     }
@@ -29,7 +30,7 @@ export async function regenerateIndex(bundle: Bundle, dir = "/"): Promise<string
     let description = "";
     try {
       const { frontmatter } = parseDoc(
-        await fs.readFile(path.join(absDir, entry.name), "utf-8")
+        await bundle.readFileRaw(`${dir === "/" ? "" : dir}/${entry.name}`)
       );
       if (typeof frontmatter.title === "string" && frontmatter.title) title = frontmatter.title;
       if (typeof frontmatter.description === "string") description = frontmatter.description;
@@ -50,19 +51,18 @@ export async function regenerateIndex(bundle: Bundle, dir = "/"): Promise<string
   }
 
   const content = sections.join("\n");
-  await fs.writeFile(path.join(absDir, "index.md"), content, "utf-8");
+  await bundle.writeFileAtomic(`${dir === "/" ? "" : dir}/index.md`, content);
   return content;
 }
 
 /** Regenerate index.md for a directory and every ancestor up to the root. */
 export async function regenerateIndexChain(bundle: Bundle, dir: string): Promise<void> {
-  let current = bundle.resolve(dir);
-  // If given a file path, start from its directory.
-  if (current.endsWith(".md")) current = path.dirname(current);
+  let current = bundle.toBundlePath(dir);
+  if (current.endsWith(".md")) current = path.posix.dirname(current);
   while (true) {
-    await regenerateIndex(bundle, bundle.toBundlePath(current));
-    if (current === bundle.root) break;
-    current = path.dirname(current);
+    await regenerateIndex(bundle, current);
+    if (current === "/") break;
+    current = path.posix.dirname(current);
   }
 }
 
@@ -75,7 +75,7 @@ function capitalize(s: string): string {
  * concept count, distinct types, and the first few titles — always derivable,
  * always current, no LLM.
  */
-async function summarizeDirectory(absDir: string): Promise<string> {
+async function summarizeDirectory(bundle: Bundle, bundleDir: string): Promise<string> {
   const titles: string[] = [];
   const types = new Set<string>();
   let count = 0;
@@ -83,19 +83,20 @@ async function summarizeDirectory(absDir: string): Promise<string> {
   const walk = async (dir: string): Promise<void> => {
     let entries;
     try {
-      entries = await fs.readdir(dir, { withFileTypes: true });
+      entries = await fs.readdir(await fs.realpath(bundle.resolve(dir)), { withFileTypes: true });
     } catch {
       return;
     }
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
       if (entry.name.startsWith(".")) continue;
-      const child = path.join(dir, entry.name);
+      if (entry.isSymbolicLink()) continue;
+      const child = `${dir === "/" ? "" : dir}/${entry.name}`;
       if (entry.isDirectory()) {
         await walk(child);
       } else if (entry.name.endsWith(".md") && !RESERVED_FILENAMES.has(entry.name)) {
         count++;
         try {
-          const { frontmatter } = parseDoc(await fs.readFile(child, "utf-8"));
+          const { frontmatter } = parseDoc(await bundle.readFileRaw(child));
           if (typeof frontmatter.type === "string" && frontmatter.type) types.add(frontmatter.type);
           if (titles.length < 3) {
             titles.push(
@@ -110,7 +111,7 @@ async function summarizeDirectory(absDir: string): Promise<string> {
       }
     }
   };
-  await walk(absDir);
+  await walk(bundleDir);
 
   if (count === 0) return "empty";
   const typeList = [...types].sort().join(", ");

@@ -2,11 +2,14 @@ services:
   understory:
     build: .
     ports:
-      - "3800:3800"
+      - "127.0.0.1:3800:3800"
     volumes:
       - ./sample-bundle:/bundle
     environment:
       BUNDLE_ROOT: /bundle
+      HOST: 0.0.0.0
+      API_BEARER_TOKEN: ${API_BEARER_TOKEN:?Set API_BEARER_TOKEN in .env}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
       LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
       LLM_MODEL: ${LLM_MODEL:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
