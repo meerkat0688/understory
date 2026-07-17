@@ -29,6 +29,7 @@ export function ChatPanel({
   const [provider, setProvider] = useState<string | undefined>(undefined);
   const [historyNotice, setHistoryNotice] = useState<string | null>(null);
   const lastSubmittedInput = useRef("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const limits = config?.chat ?? DEFAULT_CHAT_LIMITS;
   const transport = useMemo(
     () =>
@@ -77,6 +78,13 @@ export function ChatPanel({
       setInput(lastSubmittedInput.current);
     }
   }, [error, input]);
+
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 192)}px`;
+  }, [input]);
 
   return (
     <div className="flex h-full flex-col">
@@ -195,31 +203,54 @@ export function ChatPanel({
           void sendMessage({ text: submitted });
           setInput("");
         }}
-        className="flex items-end gap-2 border-t border-zinc-800 p-3"
+        className="border-t border-zinc-800/80 bg-zinc-950/50 p-3"
       >
-        <textarea
-          value={input}
-          onChange={(e) => {
-            setInput(e.target.value);
-            if (error) clearError();
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              e.currentTarget.form?.requestSubmit();
-            }
-          }}
-          placeholder="Ask or paste knowledge… (Shift+Enter for a new line)"
-          rows={3}
-          className="max-h-48 min-h-20 flex-1 resize-y rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm outline-none focus:border-cyan-600"
-        />
-        <button
-          type="submit"
-          disabled={busy || !input.trim()}
-          className="rounded-lg bg-cyan-800 px-3 py-2 text-sm text-cyan-100 hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-40"
+        <div
+          className={`rounded-xl border bg-zinc-900/60 shadow-sm transition-[border-color,box-shadow] ${
+            busy
+              ? "border-zinc-800"
+              : "border-zinc-800/90 focus-within:border-zinc-600 focus-within:shadow-[0_0_0_3px_rgba(34,211,238,0.08)]"
+          }`}
         >
-          Send
-        </button>
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={(e) => {
+              setInput(e.target.value);
+              if (error) clearError();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                e.currentTarget.form?.requestSubmit();
+              }
+            }}
+            placeholder="Ask or paste knowledge…"
+            rows={1}
+            disabled={busy}
+            className="block w-full resize-none bg-transparent px-3.5 py-3 text-sm leading-relaxed text-zinc-100 placeholder:text-zinc-500 outline-none disabled:cursor-not-allowed disabled:opacity-60"
+          />
+          <div className="flex items-center justify-between gap-2 border-t border-zinc-800/60 px-2 py-1.5">
+            <span className="px-1.5 text-[10px] text-zinc-600">
+              Enter to send · Shift+Enter for new line
+            </span>
+            <button
+              type="submit"
+              disabled={busy || !input.trim()}
+              aria-label="Send message"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-cyan-500 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
+            >
+              {busy ? (
+                <>
+                  <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-cyan-200/30 border-t-cyan-100" />
+                  Sending
+                </>
+              ) : (
+                "Send"
+              )}
+            </button>
+          </div>
+        </div>
       </form>
     </div>
   );
