@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import ReactMarkdown from "react-markdown";
+import { authHeaders } from "../api";
 import type { AppConfig } from "../api";
 import {
   DEFAULT_CHAT_LIMITS,
@@ -33,6 +34,7 @@ export function ChatPanel({
     () =>
       new DefaultChatTransport({
         api: "/api/chat",
+        headers: () => authHeaders(),
         body: () => ({ provider }),
         prepareSendMessagesRequest: ({ id, messages, body, trigger, messageId }) => {
           const prepared = prepareChatMessages(messages, limits);
