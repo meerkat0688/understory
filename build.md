@@ -132,6 +132,8 @@ OPENROUTER_API_KEY: sk-xxxx
 
 聊天右上角會出現 provider + model 下拉；換 model 後下一則訊息即用新模型（Qwen 被內容過濾時可切 Gemini / DeepSeek / Claude）。
 
+MCP（`memory_query` / `memory_add` / `memory_update` / `memory_maintain`）在碰到 inappropriate content 時，會依 `LLM_MODEL` → `OPENROUTER_MODELS` 順序自動換下一個模型重試（mutate 若已寫過檔則不重試，避免重複寫入）。Web chat 串流不自動 backoff，請用 UI 手動切換。
+
 ---
 
 

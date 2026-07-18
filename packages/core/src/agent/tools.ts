@@ -81,7 +81,12 @@ export function buildReadTools(kb: KnowledgeBase, trace?: TraceRecorder) {
   };
 }
 
-export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>, trace?: TraceRecorder) {
+export function buildWriteTools(
+  kb: KnowledgeBase,
+  filesChanged: Set<string>,
+  trace?: TraceRecorder,
+  writeAttempted?: { current: boolean }
+) {
   return {
     write_concept: tool({
       description:
@@ -93,6 +98,7 @@ export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>, tr
         log_summary: logSummary,
       }),
       execute: async ({ path, frontmatter, body, log_summary }) => {
+        if (writeAttempted) writeAttempted.current = true;
         const c = await kb.writeConcept(path, frontmatter, body, log_summary);
         filesChanged.add(c.path);
         trace?.record("write_concept", c.path, [c.path], true);
@@ -124,6 +130,7 @@ export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>, tr
         log_summary: logSummary,
       }),
       execute: async ({ path, frontmatter, replace_section, replace_body, log_summary }) => {
+        if (writeAttempted) writeAttempted.current = true;
         const c = await kb.patchConcept(
           path,
           {
@@ -148,6 +155,7 @@ export function buildWriteTools(kb: KnowledgeBase, filesChanged: Set<string>, tr
         log_summary: logSummary,
       }),
       execute: async ({ path, log_summary }) => {
+        if (writeAttempted) writeAttempted.current = true;
         await kb.deleteConcept(path, log_summary);
         filesChanged.add(path);
         trace?.record("delete_concept", path, [path], true);

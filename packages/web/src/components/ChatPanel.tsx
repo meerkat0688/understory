@@ -34,6 +34,27 @@ function parseAddCommand(input: string): PendingAdd | null {
   return { knowledge: (addMatch[1] ?? "").trim() };
 }
 
+/** Short label for OpenRouter-style ids (`org/model-name` → `model-name`). */
+function formatModelLabel(modelId: string): string {
+  const slash = modelId.lastIndexOf("/");
+  return slash >= 0 ? modelId.slice(slash + 1) : modelId;
+}
+
+function formatProviderLabel(provider: string): string {
+  switch (provider) {
+    case "openrouter":
+      return "OpenRouter";
+    case "anthropic":
+      return "Anthropic";
+    case "llamacpp":
+      return "llama.cpp";
+    case "local":
+      return "Local";
+    default:
+      return provider;
+  }
+}
+
 /**
  * Chat with the same agent the MCP server runs. Tool calls render inline —
  * watching which tools fire on which files is how we test the agent.
@@ -190,13 +211,14 @@ export function ChatPanel({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 border-b border-zinc-800 px-3 py-2">
-        <span className="text-sm font-semibold text-zinc-300">Agent chat</span>
+      <div className="flex items-center justify-between gap-3 border-b border-zinc-800 px-3 py-2">
+        <span className="shrink-0 text-sm font-semibold text-zinc-300">Agent chat</span>
         {config && (
-          <div className="ml-auto flex items-center gap-1.5">
+          <div className="flex min-w-0 items-center gap-2">
             <select
               value={activeProvider ?? ""}
               disabled={busy || resetting}
+              aria-label="Provider"
               onChange={(e) => {
                 const nextProvider = e.target.value;
                 setProvider(nextProvider);
@@ -213,28 +235,38 @@ export function ChatPanel({
                   preferred && nextModels.includes(preferred) ? preferred : nextModels[0]
                 );
               }}
-              className="rounded border border-zinc-700 bg-zinc-900 px-1.5 py-0.5 text-xs text-zinc-300 disabled:opacity-50"
+              className="rounded border border-zinc-700 bg-zinc-900 px-1.5 py-1 text-xs text-zinc-300 disabled:opacity-50"
             >
               {config.providers.map((p) => (
                 <option key={p} value={p}>
-                  {p}
+                  {formatProviderLabel(p)}
                 </option>
               ))}
             </select>
-            {modelOptions.length > 0 && (
+            {modelOptions.length > 0 ? (
               <select
                 value={activeModel ?? ""}
                 disabled={busy || resetting || modelOptions.length <= 1}
                 onChange={(e) => setModel(e.target.value)}
                 title={activeModel}
-                className="max-w-[14rem] truncate rounded border border-zinc-700 bg-zinc-900 px-1.5 py-0.5 text-xs text-zinc-300 disabled:opacity-50"
+                aria-label="Model"
+                className="max-w-[11rem] truncate rounded border border-zinc-700 bg-zinc-900 px-1.5 py-1 text-xs text-zinc-300 disabled:opacity-50 sm:max-w-[14rem]"
               >
                 {modelOptions.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
+                  <option key={m} value={m} title={m}>
+                    {formatModelLabel(m)}
                   </option>
                 ))}
               </select>
+            ) : (
+              activeProvider === "llamacpp" && (
+                <span
+                  className="rounded border border-zinc-800 bg-zinc-950 px-1.5 py-1 text-xs text-zinc-500"
+                  title="Auto-discovered from llama-server"
+                >
+                  auto
+                </span>
+              )
             )}
           </div>
         )}

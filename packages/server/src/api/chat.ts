@@ -4,6 +4,8 @@ import {
   ChatHistoryError,
   estimateCostUsd,
   extractOpenRouterCostUsd,
+  formatUnknownError,
+  isContentFilterError,
   loadChatHistoryConfig,
   loadLlmPricing,
   streamChat,
@@ -111,25 +113,6 @@ export function chatRouter(kb: KnowledgeBase): Router {
   return router;
 }
 
-function formatUnknownError(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-  if (error && typeof error === "object") {
-    const obj = error as { message?: unknown; error?: unknown; code?: unknown };
-    if (typeof obj.message === "string" && obj.message.trim()) return obj.message;
-    if (obj.error && typeof obj.error === "object") {
-      const nested = obj.error as { message?: unknown };
-      if (typeof nested.message === "string" && nested.message.trim()) return nested.message;
-    }
-    try {
-      return JSON.stringify(error);
-    } catch {
-      // fall through
-    }
-  }
-  return String(error);
-}
-
 function publicStreamError(error: unknown): string {
   const message = formatUnknownError(error);
   console.error(`[understory] chat stream failed: ${message}`);
@@ -137,7 +120,7 @@ function publicStreamError(error: unknown): string {
   if (/context|token|too long|maximum length/i.test(message)) {
     return "The model rejected this request because it exceeded its context limit.";
   }
-  if (/inappropriate content|content.?filter|content.?moderat|safety/i.test(message)) {
+  if (isContentFilterError(error)) {
     return (
       "The upstream model provider blocked this response as inappropriate content. " +
       "Try a different model/provider, or rephrase and retry."

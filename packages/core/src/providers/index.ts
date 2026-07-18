@@ -5,6 +5,11 @@ import type { LanguageModel } from "ai";
 
 export { estimateCostUsd, extractOpenRouterCostUsd, loadLlmPricing } from "./pricing.js";
 export type { CostSource, LlmPricing, TokenUsage } from "./pricing.js";
+export {
+  canRetryMutationAfterError,
+  formatUnknownError,
+  isContentFilterError,
+} from "./backoff.js";
 
 export type ProviderName = "anthropic" | "openrouter" | "llamacpp" | "local";
 
@@ -100,6 +105,54 @@ export function modelsByProvider(
   }
 
   return out;
+}
+
+export interface ModelBackoffOptions {
+  provider?: ProviderName;
+  model?: string;
+}
+
+/**
+ * Model ids to try for an OpenRouter agent call (content-filter backoff).
+ * - Explicit options.model → that model only (no chain).
+ * - Non-openrouter provider → empty (caller should use resolveModel directly).
+ * - OpenRouter without explicit model → LLM_MODEL then remaining OPENROUTER_MODELS.
+ */
+export function openRouterFallbackChain(
+  options: ModelBackoffOptions = {},
+  env: NodeJS.ProcessEnv = process.env
+): string[] {
+  const config = loadProviderConfig(env);
+  const provider = options.provider ?? config.provider;
+
+  if (provider !== "openrouter") {
+    return [];
+  }
+
+  if (options.model !== undefined) {
+    return options.model ? [options.model] : [];
+  }
+
+  const primary =
+    options.provider && options.provider !== config.provider
+      ? DEFAULT_MODELS[options.provider]
+      : config.model;
+
+  const listed = openRouterModels(env);
+  const chain: string[] = [];
+  const seen = new Set<string>();
+
+  if (primary) {
+    chain.push(primary);
+    seen.add(primary);
+  }
+  for (const id of listed) {
+    if (seen.has(id)) continue;
+    chain.push(id);
+    seen.add(id);
+  }
+
+  return chain;
 }
 
 /** Ensure the URL ends in /v1 — llama-server serves the OpenAI API there. */
