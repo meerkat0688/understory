@@ -44,6 +44,64 @@ export function availableProviders(env: NodeJS.ProcessEnv = process.env): Provid
   return out;
 }
 
+function parseCommaList(value: string | undefined): string[] {
+  if (!value) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of value.split(",")) {
+    const id = part.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+/**
+ * OpenRouter model allowlist for the chat UI.
+ * OPENROUTER_MODELS is comma-separated; LLM_MODEL is always included when
+ * the default provider is openrouter (so Portainer's pinned model stays selectable).
+ */
+export function openRouterModels(env: NodeJS.ProcessEnv = process.env): string[] {
+  const config = loadProviderConfig(env);
+  const listed = parseCommaList(env.OPENROUTER_MODELS);
+  const seen = new Set(listed);
+  const out = [...listed];
+
+  if (config.provider === "openrouter" && config.model && !seen.has(config.model)) {
+    out.unshift(config.model);
+    seen.add(config.model);
+  }
+
+  if (out.length === 0 && env.OPENROUTER_API_KEY) {
+    const fallback =
+      config.provider === "openrouter" ? config.model : DEFAULT_MODELS.openrouter;
+    if (fallback) out.push(fallback);
+  }
+
+  return out;
+}
+
+/** Per-provider model ids exposed to the web UI picker. */
+export function modelsByProvider(
+  env: NodeJS.ProcessEnv = process.env
+): Partial<Record<ProviderName, string[]>> {
+  const config = loadProviderConfig(env);
+  const out: Partial<Record<ProviderName, string[]>> = {};
+
+  for (const p of availableProviders(env)) {
+    if (p === "openrouter") {
+      out.openrouter = openRouterModels(env);
+      continue;
+    }
+    const model =
+      config.provider === p && config.model ? config.model : DEFAULT_MODELS[p];
+    out[p] = model ? [model] : [];
+  }
+
+  return out;
+}
+
 /** Ensure the URL ends in /v1 — llama-server serves the OpenAI API there. */
 function normalizeV1(baseURL: string): string {
   const trimmed = baseURL.replace(/\/+$/, "");

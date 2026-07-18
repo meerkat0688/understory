@@ -106,6 +106,7 @@ services:
       BUNDLE_ROOT: /bundle
       LLM_PROVIDER: ${LLM_PROVIDER:-llamacpp}
       LLM_MODEL: ${LLM_MODEL:-}
+      OPENROUTER_MODELS: ${OPENROUTER_MODELS:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       LLAMACPP_BASE_URL: ${LLAMACPP_BASE_URL:-http://192.168.1.101:8080}
@@ -118,7 +119,18 @@ volumes:
   okf-bundle:
 ```
 
-Secrets / LLM 設定繼續放 Portainer Environment，不要 bake 進 image。新的 env（例如 `CHAT_*`）也要在 Portainer 補上。
+Secrets / LLM 設定繼續放 Portainer Environment，不要 bake 進 image。新的 env（例如 `CHAT_*`、`OPENROUTER_MODELS`）也要在 Portainer 補上。
+
+OpenRouter 多模型切換範例：
+
+```yaml
+LLM_PROVIDER: openrouter
+LLM_MODEL: qwen/qwen3.7-plus
+OPENROUTER_MODELS: qwen/qwen3.7-plus,google/gemini-2.5-flash,deepseek/deepseek-v4-flash,deepseek/deepseek-v4-pro,anthropic/claude-sonnet-4
+OPENROUTER_API_KEY: sk-xxxx
+```
+
+聊天右上角會出現 provider + model 下拉；換 model 後下一則訊息即用新模型（Qwen 被內容過濾時可切 Gemini / DeepSeek / Claude）。
 
 ---
 

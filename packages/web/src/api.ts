@@ -75,6 +75,7 @@ export interface AppConfig {
   providers: string[];
   defaultProvider: string;
   defaultModel: string;
+  modelsByProvider: Partial<Record<string, string[]>>;
   chat: {
     contextWindowTokens: number;
     contextSafetyTokens: number;

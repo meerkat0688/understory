@@ -49,6 +49,7 @@ export function ChatPanel({
 }) {
   const [input, setInput] = useState("");
   const [provider, setProvider] = useState<string | undefined>(undefined);
+  const [model, setModel] = useState<string | undefined>(undefined);
   const [historyNotice, setHistoryNotice] = useState<string | null>(null);
   const [pendingAdd, setPendingAdd] = useState<PendingAdd | null>(null);
   const pendingAddRef = useRef<PendingAdd | null>(null);
@@ -57,12 +58,29 @@ export function ChatPanel({
   const lastSubmittedInput = useRef("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const limits = config?.chat ?? DEFAULT_CHAT_LIMITS;
+  const activeProvider = provider ?? config?.defaultProvider;
+  // Prefer the provider's allowlist only — never borrow another provider's defaultModel
+  // (e.g. openrouter's qwen id must not be sent when switching to llamacpp auto-discover).
+  const modelOptions = useMemo(() => {
+    if (!activeProvider) return [] as string[];
+    return config?.modelsByProvider?.[activeProvider] ?? [];
+  }, [activeProvider, config?.modelsByProvider]);
+
+  const activeModel =
+    model ??
+    (activeProvider === config?.defaultProvider ? config?.defaultModel : undefined) ??
+    modelOptions[0];
+
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
         api: "/api/chat",
         headers: () => authHeaders(),
-        body: () => ({ provider }),
+        // Omit model when undefined so llamacpp/local can auto-discover.
+        body: () => ({
+          provider: activeProvider,
+          ...(activeModel ? { model: activeModel } : {}),
+        }),
         prepareSendMessagesRequest: ({ id, messages, body, trigger, messageId }) => {
           const prepared = prepareChatMessages(messages, limits);
           const requestBody = {
@@ -87,7 +105,7 @@ export function ChatPanel({
           return { body: requestBody };
         },
       }),
-    [limits, provider]
+    [limits, activeProvider, activeModel]
   );
   const {
     messages,
@@ -111,6 +129,16 @@ export function ChatPanel({
 
   const busy = status === "submitted" || status === "streaming";
   const resetting = pendingAdd !== null;
+
+  useEffect(() => {
+    if (modelOptions.length === 0) {
+      if (model !== undefined) setModel(undefined);
+      return;
+    }
+    if (model && !modelOptions.includes(model)) {
+      setModel(modelOptions[0]);
+    }
+  }, [model, modelOptions]);
 
   function queueAdd(knowledge: string) {
     addEpochRef.current += 1;
@@ -165,17 +193,50 @@ export function ChatPanel({
       <div className="flex items-center gap-2 border-b border-zinc-800 px-3 py-2">
         <span className="text-sm font-semibold text-zinc-300">Agent chat</span>
         {config && (
-          <select
-            value={provider ?? config.defaultProvider}
-            onChange={(e) => setProvider(e.target.value)}
-            className="ml-auto rounded border border-zinc-700 bg-zinc-900 px-1.5 py-0.5 text-xs text-zinc-300"
-          >
-            {config.providers.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
+          <div className="ml-auto flex items-center gap-1.5">
+            <select
+              value={activeProvider ?? ""}
+              disabled={busy || resetting}
+              onChange={(e) => {
+                const nextProvider = e.target.value;
+                setProvider(nextProvider);
+                const nextModels = config.modelsByProvider?.[nextProvider] ?? [];
+                if (nextModels.length === 0) {
+                  setModel(undefined);
+                  return;
+                }
+                const preferred =
+                  nextProvider === config.defaultProvider
+                    ? config.defaultModel
+                    : nextModels[0];
+                setModel(
+                  preferred && nextModels.includes(preferred) ? preferred : nextModels[0]
+                );
+              }}
+              className="rounded border border-zinc-700 bg-zinc-900 px-1.5 py-0.5 text-xs text-zinc-300 disabled:opacity-50"
+            >
+              {config.providers.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+            {modelOptions.length > 0 && (
+              <select
+                value={activeModel ?? ""}
+                disabled={busy || resetting || modelOptions.length <= 1}
+                onChange={(e) => setModel(e.target.value)}
+                title={activeModel}
+                className="max-w-[14rem] truncate rounded border border-zinc-700 bg-zinc-900 px-1.5 py-0.5 text-xs text-zinc-300 disabled:opacity-50"
+              >
+                {modelOptions.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
         )}
       </div>
 

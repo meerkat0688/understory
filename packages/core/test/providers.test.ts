@@ -66,3 +66,33 @@ describe("discoverLlamaCppModel", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("openRouterModels", () => {
+  it("parses OPENROUTER_MODELS and prepends LLM_MODEL when missing", async () => {
+    const { openRouterModels } = await import("../src/providers/index.js");
+    expect(
+      openRouterModels({
+        LLM_PROVIDER: "openrouter",
+        LLM_MODEL: "qwen/qwen3.7-plus",
+        OPENROUTER_API_KEY: "sk-test",
+        OPENROUTER_MODELS: "google/gemini-2.5-flash,deepseek/deepseek-v4-flash",
+      })
+    ).toEqual([
+      "qwen/qwen3.7-plus",
+      "google/gemini-2.5-flash",
+      "deepseek/deepseek-v4-flash",
+    ]);
+  });
+
+  it("does not duplicate LLM_MODEL when already listed", async () => {
+    const { openRouterModels } = await import("../src/providers/index.js");
+    expect(
+      openRouterModels({
+        LLM_PROVIDER: "openrouter",
+        LLM_MODEL: "qwen/qwen3.7-plus",
+        OPENROUTER_API_KEY: "sk-test",
+        OPENROUTER_MODELS: "qwen/qwen3.7-plus,anthropic/claude-sonnet-4",
+      })
+    ).toEqual(["qwen/qwen3.7-plus", "anthropic/claude-sonnet-4"]);
+  });
+});

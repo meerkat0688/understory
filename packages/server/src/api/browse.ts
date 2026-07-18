@@ -1,6 +1,6 @@
 import express, { type Router } from "express";
 import { BundleError, TraceStore, type KnowledgeBase } from "@understory/core";
-import { availableProviders, loadProviderConfig } from "@understory/core";
+import { availableProviders, loadProviderConfig, modelsByProvider } from "@understory/core";
 import { loadChatHistoryConfig } from "@understory/core";
 
 /** Deterministic browse API — no LLM involved, browsing never costs tokens. */
@@ -81,6 +81,7 @@ export function browseRouter(kb: KnowledgeBase): Router {
       providers: availableProviders(),
       defaultProvider: config.provider,
       defaultModel: config.model,
+      modelsByProvider: modelsByProvider(),
       chat,
     });
   });
