@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport } from "ai";
+import { DefaultChatTransport, type UIMessage } from "ai";
 import ReactMarkdown from "react-markdown";
 import { authHeaders } from "../api";
 import type { AppConfig } from "../api";
@@ -11,6 +11,28 @@ import {
 } from "../chat-history";
 
 const WRITE_TOOLS = new Set(["write_concept", "patch_concept", "delete_concept"]);
+
+type ChatMessageMetadata = {
+  usage?: {
+    inputTokens?: number | null;
+    outputTokens?: number | null;
+    totalTokens?: number | null;
+  };
+  estimatedCostUsd?: number | null;
+  costSource?: "provider" | "estimate" | null;
+};
+
+type ChatMessage = UIMessage<ChatMessageMetadata>;
+
+/** Pending /add: stop active request, wait until idle, then clear and send. */
+type PendingAdd = { knowledge: string };
+
+function parseAddCommand(input: string): PendingAdd | null {
+  const trimmed = input.trim();
+  const addMatch = trimmed.match(/^\/add(?:\s+([\s\S]*))?$/i);
+  if (!addMatch) return null;
+  return { knowledge: (addMatch[1] ?? "").trim() };
+}
 
 /**
  * Chat with the same agent the MCP server runs. Tool calls render inline —
@@ -28,6 +50,10 @@ export function ChatPanel({
   const [input, setInput] = useState("");
   const [provider, setProvider] = useState<string | undefined>(undefined);
   const [historyNotice, setHistoryNotice] = useState<string | null>(null);
+  const [pendingAdd, setPendingAdd] = useState<PendingAdd | null>(null);
+  const pendingAddRef = useRef<PendingAdd | null>(null);
+  const addEpochRef = useRef(0);
+  const completedAddEpochRef = useRef(0);
   const lastSubmittedInput = useRef("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const limits = config?.chat ?? DEFAULT_CHAT_LIMITS;
@@ -63,15 +89,63 @@ export function ChatPanel({
       }),
     [limits, provider]
   );
-  const { messages, sendMessage, regenerate, status, error, clearError } = useChat({
+  const {
+    messages,
+    setMessages,
+    sendMessage,
+    regenerate,
+    stop,
+    status,
+    error,
+    clearError,
+  } = useChat<ChatMessage>({
     transport,
-    onFinish: () => {
-      lastSubmittedInput.current = "";
+    onFinish: ({ isAbort }) => {
+      // During /add reset, keep lastSubmittedInput for the upcoming send / error restore.
+      if (!isAbort && !pendingAddRef.current) {
+        lastSubmittedInput.current = "";
+      }
       onMutation(); // refresh browse pane; agent may have written files
     },
   });
 
   const busy = status === "submitted" || status === "streaming";
+  const resetting = pendingAdd !== null;
+
+  function queueAdd(knowledge: string) {
+    addEpochRef.current += 1;
+    const next = { knowledge };
+    pendingAddRef.current = next;
+    setPendingAdd(next);
+    setInput("");
+    clearError();
+    if (busy) stop();
+  }
+
+  // After stop() settles (status leaves submitted/streaming), clear then send.
+  useEffect(() => {
+    if (!pendingAdd || busy) return;
+    const epoch = addEpochRef.current;
+    if (completedAddEpochRef.current === epoch) return;
+    completedAddEpochRef.current = epoch;
+
+    const knowledge = pendingAdd.knowledge;
+    pendingAddRef.current = null;
+    setPendingAdd(null);
+
+    setMessages([]);
+    setHistoryNotice(null);
+    clearError();
+    setInput("");
+
+    if (!knowledge) {
+      lastSubmittedInput.current = "";
+      return;
+    }
+
+    lastSubmittedInput.current = knowledge;
+    void sendMessage({ text: knowledge });
+  }, [pendingAdd, busy, setMessages, clearError, sendMessage]);
 
   useEffect(() => {
     if (error && !input && lastSubmittedInput.current) {
@@ -109,7 +183,9 @@ export function ChatPanel({
         {messages.length === 0 && (
           <p className="p-4 text-sm text-zinc-500">
             Test the knowledge agent here — ask a question, or tell it something worth
-            remembering. Tool calls show inline so you can watch it work.
+            remembering. Tool calls show inline so you can watch it work.{" "}
+            <span className="font-mono text-zinc-400">/add …</span> clears the session,
+            then ingests the knowledge that follows.
           </p>
         )}
         {messages.map((m) => (
@@ -163,9 +239,14 @@ export function ChatPanel({
               }
               return null;
             })}
+            {m.role === "assistant" && <UsageFooter metadata={m.metadata} />}
           </div>
         ))}
-        {busy && <div className="animate-pulse text-xs text-zinc-500">agent working…</div>}
+        {(busy || resetting) && (
+          <div className="animate-pulse text-xs text-zinc-500">
+            {resetting && !busy ? "starting clean session…" : "agent working…"}
+          </div>
+        )}
         {historyNotice && <p className="text-xs text-amber-400">{historyNotice}</p>}
         {error && (
           <div className="rounded-lg border border-red-900/70 bg-red-950/30 p-2 text-xs text-red-300">
@@ -196,8 +277,14 @@ export function ChatPanel({
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          if (!input.trim() || busy) return;
-          const submitted = input;
+          const submitted = input.trim();
+          if (!submitted || resetting) return;
+          const add = parseAddCommand(submitted);
+          if (add) {
+            queueAdd(add.knowledge);
+            return;
+          }
+          if (busy) return;
           lastSubmittedInput.current = submitted;
           clearError();
           void sendMessage({ text: submitted });
@@ -207,7 +294,7 @@ export function ChatPanel({
       >
         <div
           className={`rounded-xl border bg-zinc-900/60 shadow-sm transition-[border-color,box-shadow] ${
-            busy
+            busy || resetting
               ? "border-zinc-800"
               : "border-zinc-800/90 focus-within:border-zinc-600 focus-within:shadow-[0_0_0_3px_rgba(34,211,238,0.08)]"
           }`}
@@ -225,22 +312,25 @@ export function ChatPanel({
                 e.currentTarget.form?.requestSubmit();
               }
             }}
-            placeholder="Ask or paste knowledge…"
+            placeholder="Ask, or /add your knowledge…"
             rows={1}
-            disabled={busy}
-            className="block w-full resize-none bg-transparent px-3.5 py-3 text-sm leading-relaxed text-zinc-100 placeholder:text-zinc-500 outline-none disabled:cursor-not-allowed disabled:opacity-60"
+            className="block w-full resize-none bg-transparent px-3.5 py-3 text-sm leading-relaxed text-zinc-100 placeholder:text-zinc-500 outline-none"
           />
           <div className="flex items-center justify-between gap-2 border-t border-zinc-800/60 px-2 py-1.5">
             <span className="px-1.5 text-[10px] text-zinc-600">
-              Enter to send · Shift+Enter for new line
+              Enter to send · /add knowledge (clears session first)
             </span>
             <button
               type="submit"
-              disabled={busy || !input.trim()}
+              disabled={
+                !input.trim() ||
+                resetting ||
+                (busy && parseAddCommand(input.trim()) === null)
+              }
               aria-label="Send message"
               className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-cyan-500 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
             >
-              {busy ? (
+              {busy || resetting ? (
                 <>
                   <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-cyan-200/30 border-t-cyan-100" />
                   Sending
@@ -266,4 +356,37 @@ function formatChatError(error: Error): string {
     // Streaming and client-side errors are already plain text.
   }
   return error.message || "The chat request failed.";
+}
+
+function formatTokenCount(n: number): string {
+  if (n >= 10_000) return `${Math.round(n / 1000)}k`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return String(n);
+}
+
+function formatUsd(n: number): string {
+  if (n < 0.01) return `$${n.toFixed(4)}`;
+  if (n < 1) return `$${n.toFixed(3)}`;
+  return `$${n.toFixed(2)}`;
+}
+
+function UsageFooter({ metadata }: { metadata?: ChatMessageMetadata }) {
+  const usage = metadata?.usage;
+  if (!usage) return null;
+  const input = usage.inputTokens ?? 0;
+  const output = usage.outputTokens ?? 0;
+  if (input <= 0 && output <= 0) return null;
+
+  const cost =
+    typeof metadata?.estimatedCostUsd === "number" ? metadata.estimatedCostUsd : null;
+  const parts = [
+    `${formatTokenCount(input)} in`,
+    `${formatTokenCount(output)} out`,
+  ];
+  if (cost != null) {
+    const label = metadata?.costSource === "provider" ? "Cost" : "Est.";
+    parts.unshift(`${label} ${formatUsd(cost)}`);
+  }
+
+  return <p className="mt-1 text-[10px] text-zinc-500">{parts.join(" · ")}</p>;
 }

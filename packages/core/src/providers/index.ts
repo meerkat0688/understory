@@ -3,6 +3,9 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import type { LanguageModel } from "ai";
 
+export { estimateCostUsd, extractOpenRouterCostUsd, loadLlmPricing } from "./pricing.js";
+export type { CostSource, LlmPricing, TokenUsage } from "./pricing.js";
+
 export type ProviderName = "anthropic" | "openrouter" | "llamacpp" | "local";
 
 const PROVIDER_NAMES: ProviderName[] = ["anthropic", "openrouter", "llamacpp", "local"];
@@ -103,7 +106,8 @@ export async function resolveModel(
     }
     case "openrouter": {
       const openrouter = createOpenRouter({ apiKey: env.OPENROUTER_API_KEY });
-      return openrouter.chat(m);
+      // Ask the SDK for usage accounting so streamed responses include billed cost.
+      return openrouter.chat(m, { usage: { include: true } });
     }
     case "llamacpp": {
       const baseURL = env.LLAMACPP_BASE_URL;
