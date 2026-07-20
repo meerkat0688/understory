@@ -52,6 +52,15 @@ describe("selectableModels", () => {
   });
 });
 
+describe("providerLabel", () => {
+  it("recognizes known hosts", async () => {
+    const { providerLabel } = await import("../src/providers/index.js");
+    expect(providerLabel("https://openrouter.ai/api/v1")).toBe("OpenRouter");
+    expect(providerLabel("https://api.deepseek.com/v1")).toBe("DeepSeek");
+    expect(providerLabel("https://api.anthropic.com/v1")).toBe("Anthropic");
+  });
+});
+
 describe("modelFallbackChain", () => {
   const env = {
     LLM_API_BASE_URL: "https://openrouter.ai/api/v1",

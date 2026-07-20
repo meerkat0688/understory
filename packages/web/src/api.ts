@@ -74,7 +74,11 @@ export interface QueryTrace extends TraceSummary {
 export interface AppConfig {
   model: string;
   format: "openai" | "anthropic" | string;
+  /** Primary endpoint label, e.g. "OpenRouter". */
+  provider: string;
   fallbackConfigured: boolean;
+  /** Fallback endpoint label when configured, e.g. "DeepSeek". */
+  fallbackProvider: string | null;
   /** Optional allowlist from OPENROUTER_MODELS (+ LLM_MODEL). Empty → free-text model field. */
   models: string[];
   chat: {

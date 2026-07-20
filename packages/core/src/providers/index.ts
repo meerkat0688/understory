@@ -232,6 +232,21 @@ function parseCommaList(value: string | undefined): string[] {
   return out;
 }
 
+/** Friendly provider name for the chat UI (derived from endpoint URL). */
+export function providerLabel(baseURL: string): string {
+  const host = baseURL.toLowerCase();
+  if (host.includes("openrouter.ai")) return "OpenRouter";
+  if (host.includes("api.anthropic.com")) return "Anthropic";
+  if (host.includes("api.deepseek.com")) return "DeepSeek";
+  if (host.includes("api.openai.com")) return "OpenAI";
+  if (host.includes("localhost") || host.includes("127.0.0.1")) return "Local";
+  try {
+    return new URL(baseURL).hostname.replace(/^www\./, "") || "Custom";
+  } catch {
+    return "Custom";
+  }
+}
+
 /**
  * Model ids for the chat UI picker.
  * OPENROUTER_MODELS is comma-separated; LLM_MODEL is always included when set.

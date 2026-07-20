@@ -3,6 +3,7 @@ import {
   BundleError,
   TraceStore,
   loadChatHistoryConfig,
+  providerLabel,
   resolveFallbackConfig,
   resolveModelConfig,
   selectableModels,
@@ -86,7 +87,9 @@ export function browseRouter(kb: KnowledgeBase): Router {
     res.json({
       model: config.model,
       format: config.format,
+      provider: providerLabel(config.baseURL),
       fallbackConfigured: fallback !== null,
+      fallbackProvider: fallback ? providerLabel(fallback.baseURL) : null,
       models: selectableModels(),
       chat: loadChatHistoryConfig(),
     });

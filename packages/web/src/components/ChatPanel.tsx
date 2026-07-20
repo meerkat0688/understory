@@ -186,9 +186,23 @@ export function ChatPanel({
         <span className="shrink-0 text-sm font-semibold text-zinc-300">Agent chat</span>
         {config && (
           <div className="flex min-w-0 items-center gap-2">
+            <span
+              className="rounded border border-zinc-700 bg-zinc-900 px-1.5 py-1 text-xs text-zinc-300"
+              title={
+                config.fallbackProvider
+                  ? `Primary: ${config.provider} · Fallback: ${config.fallbackProvider}`
+                  : config.provider
+              }
+            >
+              {config.provider}
+            </span>
             {config.fallbackConfigured && (
               <span
-                title="Fallback model configured"
+                title={
+                  config.fallbackProvider
+                    ? `Fallback: ${config.fallbackProvider}`
+                    : "Fallback model configured"
+                }
                 className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400"
               />
             )}
