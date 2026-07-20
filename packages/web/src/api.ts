@@ -72,10 +72,11 @@ export interface QueryTrace extends TraceSummary {
 }
 
 export interface AppConfig {
-  providers: string[];
-  defaultProvider: string;
-  defaultModel: string;
-  modelsByProvider: Partial<Record<string, string[]>>;
+  model: string;
+  format: "openai" | "anthropic" | string;
+  fallbackConfigured: boolean;
+  /** Optional allowlist from OPENROUTER_MODELS (+ LLM_MODEL). Empty → free-text model field. */
+  models: string[];
   chat: {
     contextWindowTokens: number;
     contextSafetyTokens: number;

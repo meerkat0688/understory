@@ -1,6 +1,5 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import type { LanguageModel } from "ai";
 
 export { estimateCostUsd, extractOpenRouterCostUsd, loadLlmPricing } from "./pricing.js";
@@ -11,42 +10,213 @@ export {
   isContentFilterError,
 } from "./backoff.js";
 
-export type ProviderName = "anthropic" | "openrouter" | "llamacpp" | "local";
+type ResolvedLanguageModel = Extract<LanguageModel, { doGenerate: unknown }>;
 
-const PROVIDER_NAMES: ProviderName[] = ["anthropic", "openrouter", "llamacpp", "local"];
+export type ApiFormat = "openai" | "anthropic";
 
-export interface ProviderConfig {
-  /** Default provider, from LLM_PROVIDER env. */
-  provider: ProviderName;
-  /** Default model id for that provider, from LLM_MODEL env. */
+export interface ModelConfig {
+  baseURL: string;
+  apiKey: string;
+  format: ApiFormat;
   model: string;
 }
 
-const DEFAULT_MODELS: Record<ProviderName, string> = {
-  anthropic: "claude-sonnet-5",
-  openrouter: "anthropic/claude-sonnet-5",
-  llamacpp: "", // auto-discovered from /v1/models
-  local: "local-model",
-};
+const LEGACY_NOTICE =
+  "[understory] using legacy env vars. Migrate to LLM_API_BASE_URL + LLM_API_KEY + LLM_API_FORMAT.";
 
-export function loadProviderConfig(env: NodeJS.ProcessEnv = process.env): ProviderConfig {
-  const provider = (env.LLM_PROVIDER ?? "anthropic") as ProviderName;
-  if (!PROVIDER_NAMES.includes(provider)) {
-    throw new Error(
-      `Unknown LLM_PROVIDER "${env.LLM_PROVIDER}" (${PROVIDER_NAMES.join("|")})`
-    );
-  }
-  return { provider, model: env.LLM_MODEL ?? DEFAULT_MODELS[provider] };
+/** Ensure the URL ends in /v1 — llama-server serves the OpenAI API there. */
+function normalizeV1(baseURL: string): string {
+  const trimmed = baseURL.replace(/\/+$/, "");
+  return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`;
 }
 
-/** Providers the current env has credentials/config for (drives the UI picker). */
-export function availableProviders(env: NodeJS.ProcessEnv = process.env): ProviderName[] {
-  const out: ProviderName[] = [];
-  if (env.ANTHROPIC_API_KEY) out.push("anthropic");
-  if (env.OPENROUTER_API_KEY) out.push("openrouter");
-  if (env.LLAMACPP_BASE_URL) out.push("llamacpp");
-  if (env.LOCAL_BASE_URL) out.push("local");
-  return out;
+function parseFormat(value: string | undefined, fallback: ApiFormat, envName: string): ApiFormat {
+  const format = value ?? fallback;
+  if (format !== "openai" && format !== "anthropic") {
+    throw new Error(`${envName} must be "openai" or "anthropic"`);
+  }
+  return format;
+}
+
+let legacyNoticed = false;
+
+function legacyNotice(): void {
+  if (legacyNoticed) return;
+  legacyNoticed = true;
+  console.error(LEGACY_NOTICE);
+}
+
+function legacyConfig(env: NodeJS.ProcessEnv): ModelConfig | null {
+  const provider = env.LLM_PROVIDER;
+  if (provider) {
+    switch (provider) {
+      case "anthropic":
+        if (!env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is required for legacy anthropic provider");
+        legacyNotice();
+        return {
+          baseURL: "https://api.anthropic.com/v1",
+          apiKey: env.ANTHROPIC_API_KEY,
+          format: "anthropic",
+          model: env.LLM_MODEL ?? "claude-sonnet-5",
+        };
+      case "openrouter":
+        if (!env.OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY is required for legacy openrouter provider");
+        legacyNotice();
+        return {
+          baseURL: "https://openrouter.ai/api/v1",
+          apiKey: env.OPENROUTER_API_KEY,
+          format: "openai",
+          model: env.LLM_MODEL ?? "anthropic/claude-sonnet-5",
+        };
+      case "llamacpp":
+        if (!env.LLAMACPP_BASE_URL) throw new Error("LLAMACPP_BASE_URL is required for legacy llamacpp provider");
+        legacyNotice();
+        return {
+          baseURL: env.LLAMACPP_BASE_URL,
+          apiKey: env.LLAMACPP_API_KEY ?? "not-needed",
+          format: "openai",
+          model: env.LLM_MODEL ?? "",
+        };
+      case "deepseek":
+        if (!env.DEEPSEEK_API_KEY) throw new Error("DEEPSEEK_API_KEY is required for legacy deepseek provider");
+        legacyNotice();
+        return {
+          baseURL: "https://api.deepseek.com/v1",
+          apiKey: env.DEEPSEEK_API_KEY,
+          format: "openai",
+          model: env.LLM_MODEL ?? "deepseek-chat",
+        };
+      case "local":
+        if (!env.LOCAL_BASE_URL) throw new Error("LOCAL_BASE_URL is required for legacy local provider");
+        legacyNotice();
+        return {
+          baseURL: env.LOCAL_BASE_URL,
+          apiKey: env.LOCAL_API_KEY ?? "not-needed",
+          format: "openai",
+          model: env.LLM_MODEL ?? "local-model",
+        };
+      default:
+        throw new Error(`Unknown legacy LLM_PROVIDER "${provider}" (anthropic|openrouter|llamacpp|deepseek|local)`);
+    }
+  }
+
+  const configured = [
+    env.ANTHROPIC_API_KEY ? "ANTHROPIC_API_KEY" : null,
+    env.OPENROUTER_API_KEY ? "OPENROUTER_API_KEY" : null,
+    env.LLAMACPP_BASE_URL ? "LLAMACPP_BASE_URL" : null,
+    env.DEEPSEEK_API_KEY ? "DEEPSEEK_API_KEY" : null,
+    env.LOCAL_BASE_URL ? "LOCAL_BASE_URL" : null,
+  ].filter(Boolean) as string[];
+
+  if (configured.length === 0) return null;
+  if (configured.length === 1 && configured[0] === "ANTHROPIC_API_KEY") {
+    legacyNotice();
+    return {
+      baseURL: "https://api.anthropic.com/v1",
+      apiKey: env.ANTHROPIC_API_KEY!,
+      format: "anthropic",
+      model: env.LLM_MODEL ?? "claude-sonnet-5",
+    };
+  }
+
+  throw new Error(
+    `Ambiguous legacy LLM configuration (${configured.join(", ")}). Set LLM_API_BASE_URL + LLM_API_KEY + LLM_API_FORMAT, or set LLM_PROVIDER explicitly.`
+  );
+}
+
+export function resolveModelConfig(env: NodeJS.ProcessEnv = process.env): ModelConfig {
+  if (env.LLM_API_BASE_URL) {
+    return {
+      baseURL: env.LLM_API_BASE_URL,
+      apiKey: env.LLM_API_KEY ?? "not-needed",
+      format: parseFormat(env.LLM_API_FORMAT, "openai", "LLM_API_FORMAT"),
+      model: env.LLM_MODEL ?? "",
+    };
+  }
+
+  const legacy = legacyConfig(env);
+  if (legacy) return legacy;
+
+  throw new Error(
+    "No LLM configured. Set LLM_API_BASE_URL + LLM_API_KEY + LLM_API_FORMAT + LLM_MODEL."
+  );
+}
+
+export function resolveFallbackConfig(env: NodeJS.ProcessEnv = process.env): ModelConfig | null {
+  if (!env.LLM_FALLBACK_API_BASE_URL) return null;
+  return {
+    baseURL: env.LLM_FALLBACK_API_BASE_URL,
+    apiKey: env.LLM_FALLBACK_API_KEY ?? "not-needed",
+    format: parseFormat(env.LLM_FALLBACK_API_FORMAT, "openai", "LLM_FALLBACK_API_FORMAT"),
+    model: env.LLM_FALLBACK_MODEL ?? "",
+  };
+}
+
+// Any OpenAI-compatible endpoint exposes GET /v1/models.
+// Cache discovery per base URL for a short TTL — avoids a discovery
+// round-trip on every single agent turn, while still noticing within a
+// session that the user swapped which model (e.g. via llama-swap) has
+// loaded (a process-lifetime cache would never see that again).
+const DISCOVERY_TTL_MS = 60_000;
+const discoveryCache = new Map<string, { promise: Promise<string>; expiresAt: number }>();
+
+/**
+ * Auto-discover the model id from an OpenAI-compatible /v1/models endpoint.
+ * Prefers a model reported as "loaded" (e.g. by llama-swap); falls back to
+ * the first listed. Results are cached per URL with a 60s TTL so model
+ * swaps are noticed within a session.
+ */
+export async function discoverLlamaCppModel(baseURL: string): Promise<string> {
+  const url = normalizeV1(baseURL);
+  const cached = discoveryCache.get(url);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.promise;
+  }
+  const promise = (async () => {
+    const res = await fetch(`${url}/models`);
+    if (!res.ok) {
+      throw new Error(`Model discovery failed: ${res.status} at ${url}/models`);
+    }
+    const body = (await res.json()) as {
+      data?: { id: string; status?: { value?: string } }[];
+    };
+    const models = body.data ?? [];
+    if (models.length === 0) {
+      throw new Error(`No models listed at ${url}/models`);
+    }
+    const loaded = models.find((m) => m.status?.value === "loaded");
+    return (loaded ?? models[0]).id;
+  })();
+  discoveryCache.set(url, { promise, expiresAt: Date.now() + DISCOVERY_TTL_MS });
+  // Don't cache failures — the server may just be starting up.
+  promise.catch(() => discoveryCache.delete(url));
+  return promise;
+}
+
+export async function createModel(cfg: ModelConfig): Promise<ResolvedLanguageModel> {
+  let model = cfg.model;
+  if (!model) {
+    if (cfg.format === "openai") {
+      try {
+        model = await discoverLlamaCppModel(cfg.baseURL);
+      } catch {
+        throw new Error("LLM_MODEL is required for this endpoint.");
+      }
+    } else {
+      throw new Error("LLM_MODEL is required for this endpoint.");
+    }
+  }
+
+  switch (cfg.format) {
+    case "anthropic":
+      return createAnthropic({ baseURL: cfg.baseURL, apiKey: cfg.apiKey })(model) as ResolvedLanguageModel;
+    case "openai":
+      return createOpenAICompatible({
+        name: "custom",
+        baseURL: normalizeV1(cfg.baseURL),
+        apiKey: cfg.apiKey,
+      })(model) as ResolvedLanguageModel;
+  }
 }
 
 function parseCommaList(value: string | undefined): string[] {
@@ -63,182 +233,46 @@ function parseCommaList(value: string | undefined): string[] {
 }
 
 /**
- * OpenRouter model allowlist for the chat UI.
- * OPENROUTER_MODELS is comma-separated; LLM_MODEL is always included when
- * the default provider is openrouter (so Portainer's pinned model stays selectable).
+ * Model ids for the chat UI picker.
+ * OPENROUTER_MODELS is comma-separated; LLM_MODEL is always included when set.
  */
-export function openRouterModels(env: NodeJS.ProcessEnv = process.env): string[] {
-  const config = loadProviderConfig(env);
+export function selectableModels(env: NodeJS.ProcessEnv = process.env): string[] {
   const listed = parseCommaList(env.OPENROUTER_MODELS);
   const seen = new Set(listed);
   const out = [...listed];
 
-  if (config.provider === "openrouter" && config.model && !seen.has(config.model)) {
-    out.unshift(config.model);
-    seen.add(config.model);
-  }
-
-  if (out.length === 0 && env.OPENROUTER_API_KEY) {
-    const fallback =
-      config.provider === "openrouter" ? config.model : DEFAULT_MODELS.openrouter;
-    if (fallback) out.push(fallback);
-  }
-
-  return out;
-}
-
-/** Per-provider model ids exposed to the web UI picker. */
-export function modelsByProvider(
-  env: NodeJS.ProcessEnv = process.env
-): Partial<Record<ProviderName, string[]>> {
-  const config = loadProviderConfig(env);
-  const out: Partial<Record<ProviderName, string[]>> = {};
-
-  for (const p of availableProviders(env)) {
-    if (p === "openrouter") {
-      out.openrouter = openRouterModels(env);
-      continue;
+  try {
+    const config = resolveModelConfig(env);
+    if (config.model && !seen.has(config.model)) {
+      out.unshift(config.model);
+      seen.add(config.model);
     }
-    const model =
-      config.provider === p && config.model ? config.model : DEFAULT_MODELS[p];
-    out[p] = model ? [model] : [];
+  } catch {
+    // Config may be incomplete during tests; OPENROUTER_MODELS alone is enough.
   }
 
   return out;
 }
 
 export interface ModelBackoffOptions {
-  provider?: ProviderName;
   model?: string;
 }
 
 /**
- * Model ids to try for an OpenRouter agent call (content-filter backoff).
+ * Model ids to try on content-filter errors (MCP query/mutate).
  * - Explicit options.model → that model only (no chain).
- * - Non-openrouter provider → empty (caller should use resolveModel directly).
- * - OpenRouter without explicit model → LLM_MODEL then remaining OPENROUTER_MODELS.
+ * - OPENROUTER_MODELS unset / single model → empty (caller uses resolveAgentModel once).
+ * - Otherwise → LLM_MODEL then remaining OPENROUTER_MODELS.
  */
-export function openRouterFallbackChain(
+export function modelFallbackChain(
   options: ModelBackoffOptions = {},
   env: NodeJS.ProcessEnv = process.env
 ): string[] {
-  const config = loadProviderConfig(env);
-  const provider = options.provider ?? config.provider;
-
-  if (provider !== "openrouter") {
-    return [];
-  }
-
   if (options.model !== undefined) {
     return options.model ? [options.model] : [];
   }
 
-  const primary =
-    options.provider && options.provider !== config.provider
-      ? DEFAULT_MODELS[options.provider]
-      : config.model;
-
-  const listed = openRouterModels(env);
-  const chain: string[] = [];
-  const seen = new Set<string>();
-
-  if (primary) {
-    chain.push(primary);
-    seen.add(primary);
-  }
-  for (const id of listed) {
-    if (seen.has(id)) continue;
-    chain.push(id);
-    seen.add(id);
-  }
-
-  return chain;
-}
-
-/** Ensure the URL ends in /v1 — llama-server serves the OpenAI API there. */
-function normalizeV1(baseURL: string): string {
-  const trimmed = baseURL.replace(/\/+$/, "");
-  return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`;
-}
-
-// llama-server (or llama-swap in front of it) exposes GET /v1/models.
-// Cache discovery per base URL for a short TTL — avoids a discovery
-// round-trip on every single agent turn, while still noticing within a
-// session that the user swapped which model llama-swap has loaded (a
-// process-lifetime cache would never see that again without a restart).
-const DISCOVERY_TTL_MS = 60_000;
-const discoveryCache = new Map<string, { promise: Promise<string>; expiresAt: number }>();
-
-/**
- * Pick a model id from llama-server's /v1/models. Prefers a model llama-swap
- * reports as "loaded" (avoids a multi-minute model swap); falls back to the
- * first listed. Plain llama-server lists exactly one model, no status field.
- */
-export async function discoverLlamaCppModel(baseURL: string): Promise<string> {
-  const url = normalizeV1(baseURL);
-  const cached = discoveryCache.get(url);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.promise;
-  }
-  const promise = (async () => {
-    const res = await fetch(`${url}/models`);
-    if (!res.ok) {
-      throw new Error(`llama-server model discovery failed: ${res.status} at ${url}/models`);
-    }
-    const body = (await res.json()) as {
-      data?: { id: string; status?: { value?: string } }[];
-    };
-    const models = body.data ?? [];
-    if (models.length === 0) {
-      throw new Error(`llama-server at ${url} lists no models`);
-    }
-    const loaded = models.find((m) => m.status?.value === "loaded");
-    return (loaded ?? models[0]).id;
-  })();
-  discoveryCache.set(url, { promise, expiresAt: Date.now() + DISCOVERY_TTL_MS });
-  // Don't cache failures — the server may just be starting up.
-  promise.catch(() => discoveryCache.delete(url));
-  return promise;
-}
-
-export async function resolveModel(
-  provider?: ProviderName,
-  model?: string,
-  env: NodeJS.ProcessEnv = process.env
-): Promise<LanguageModel> {
-  const config = loadProviderConfig(env);
-  const p = provider ?? config.provider;
-  let m = model ?? (provider && provider !== config.provider ? DEFAULT_MODELS[p] : config.model);
-
-  switch (p) {
-    case "anthropic": {
-      const anthropic = createAnthropic({ apiKey: env.ANTHROPIC_API_KEY });
-      return anthropic(m);
-    }
-    case "openrouter": {
-      const openrouter = createOpenRouter({ apiKey: env.OPENROUTER_API_KEY });
-      // Ask the SDK for usage accounting so streamed responses include billed cost.
-      return openrouter.chat(m, { usage: { include: true } });
-    }
-    case "llamacpp": {
-      const baseURL = env.LLAMACPP_BASE_URL;
-      if (!baseURL) throw new Error("LLAMACPP_BASE_URL is required for the llamacpp provider");
-      if (!m) m = await discoverLlamaCppModel(baseURL);
-      const llamacpp = createOpenAICompatible({
-        name: "llamacpp",
-        baseURL: normalizeV1(baseURL),
-        // llama-server ignores auth unless started with --api-key.
-        apiKey: env.LLAMACPP_API_KEY ?? "not-needed",
-      });
-      return llamacpp(m);
-    }
-    case "local": {
-      const local = createOpenAICompatible({
-        name: "local",
-        baseURL: env.LOCAL_BASE_URL ?? "http://localhost:8080/v1",
-        apiKey: env.LOCAL_API_KEY ?? "not-needed",
-      });
-      return local(m);
-    }
-  }
+  // Content-filter model hopping is opt-in via OPENROUTER_MODELS.
+  if (!env.OPENROUTER_MODELS?.trim()) return [];
+  return selectableModels(env);
 }

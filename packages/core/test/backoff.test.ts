@@ -4,7 +4,7 @@ import {
   formatUnknownError,
   isContentFilterError,
 } from "../src/providers/backoff.js";
-import { openRouterFallbackChain } from "../src/providers/index.js";
+import { modelFallbackChain, selectableModels } from "../src/providers/index.js";
 
 describe("formatUnknownError", () => {
   it("reads nested OpenRouter-style objects", () => {
@@ -34,17 +34,35 @@ describe("isContentFilterError", () => {
   });
 });
 
-describe("openRouterFallbackChain", () => {
+describe("selectableModels", () => {
+  it("includes LLM_MODEL then OPENROUTER_MODELS", () => {
+    expect(
+      selectableModels({
+        LLM_API_BASE_URL: "https://openrouter.ai/api/v1",
+        LLM_API_KEY: "sk-test",
+        LLM_MODEL: "qwen/qwen3.7-plus",
+        OPENROUTER_MODELS:
+          "qwen/qwen3.7-plus,google/gemini-2.5-flash,deepseek/deepseek-v4-pro",
+      })
+    ).toEqual([
+      "qwen/qwen3.7-plus",
+      "google/gemini-2.5-flash",
+      "deepseek/deepseek-v4-pro",
+    ]);
+  });
+});
+
+describe("modelFallbackChain", () => {
   const env = {
-    LLM_PROVIDER: "openrouter",
+    LLM_API_BASE_URL: "https://openrouter.ai/api/v1",
+    LLM_API_KEY: "sk-test",
     LLM_MODEL: "qwen/qwen3.7-plus",
-    OPENROUTER_API_KEY: "sk-test",
     OPENROUTER_MODELS:
       "qwen/qwen3.7-plus,google/gemini-2.5-flash,deepseek/deepseek-v4-pro,anthropic/claude-sonnet-4",
   };
 
   it("starts at LLM_MODEL then walks OPENROUTER_MODELS", () => {
-    expect(openRouterFallbackChain({}, env)).toEqual([
+    expect(modelFallbackChain({}, env)).toEqual([
       "qwen/qwen3.7-plus",
       "google/gemini-2.5-flash",
       "deepseek/deepseek-v4-pro",
@@ -53,34 +71,19 @@ describe("openRouterFallbackChain", () => {
   });
 
   it("honors an explicit model with no further backoff", () => {
-    expect(openRouterFallbackChain({ model: "deepseek/deepseek-v4-pro" }, env)).toEqual([
+    expect(modelFallbackChain({ model: "deepseek/deepseek-v4-pro" }, env)).toEqual([
       "deepseek/deepseek-v4-pro",
     ]);
   });
 
-  it("returns empty for non-openrouter so callers use resolveModel directly", () => {
+  it("returns empty when OPENROUTER_MODELS is unset", () => {
     expect(
-      openRouterFallbackChain(
+      modelFallbackChain(
         {},
         {
-          LLM_PROVIDER: "llamacpp",
+          LLM_API_BASE_URL: "http://localhost:8080/v1",
+          LLM_API_KEY: "not-needed",
           LLM_MODEL: "",
-          LLAMACPP_BASE_URL: "http://localhost:8080",
-          OPENROUTER_MODELS: "qwen/qwen3.7-plus,deepseek/deepseek-v4-pro",
-        }
-      )
-    ).toEqual([]);
-  });
-
-  it("does not borrow openrouter default when selecting another provider", () => {
-    expect(
-      openRouterFallbackChain(
-        { provider: "llamacpp" },
-        {
-          LLM_PROVIDER: "openrouter",
-          LLM_MODEL: "qwen/qwen3.7-plus",
-          OPENROUTER_API_KEY: "sk-test",
-          LLAMACPP_BASE_URL: "http://localhost:8080",
         }
       )
     ).toEqual([]);

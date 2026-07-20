@@ -1,7 +1,13 @@
 import express, { type Router } from "express";
-import { BundleError, TraceStore, type KnowledgeBase } from "@understory/core";
-import { availableProviders, loadProviderConfig, modelsByProvider } from "@understory/core";
-import { loadChatHistoryConfig } from "@understory/core";
+import {
+  BundleError,
+  TraceStore,
+  loadChatHistoryConfig,
+  resolveFallbackConfig,
+  resolveModelConfig,
+  selectableModels,
+  type KnowledgeBase,
+} from "@understory/core";
 
 /** Deterministic browse API — no LLM involved, browsing never costs tokens. */
 export function browseRouter(kb: KnowledgeBase): Router {
@@ -75,14 +81,14 @@ export function browseRouter(kb: KnowledgeBase): Router {
   });
 
   router.get("/config", (_req, res) => {
-    const config = loadProviderConfig();
-    const chat = loadChatHistoryConfig();
+    const config = resolveModelConfig();
+    const fallback = resolveFallbackConfig();
     res.json({
-      providers: availableProviders(),
-      defaultProvider: config.provider,
-      defaultModel: config.model,
-      modelsByProvider: modelsByProvider(),
-      chat,
+      model: config.model,
+      format: config.format,
+      fallbackConfigured: fallback !== null,
+      models: selectableModels(),
+      chat: loadChatHistoryConfig(),
     });
   });
 

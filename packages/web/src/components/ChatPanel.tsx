@@ -40,21 +40,6 @@ function formatModelLabel(modelId: string): string {
   return slash >= 0 ? modelId.slice(slash + 1) : modelId;
 }
 
-function formatProviderLabel(provider: string): string {
-  switch (provider) {
-    case "openrouter":
-      return "OpenRouter";
-    case "anthropic":
-      return "Anthropic";
-    case "llamacpp":
-      return "llama.cpp";
-    case "local":
-      return "Local";
-    default:
-      return provider;
-  }
-}
-
 /**
  * Chat with the same agent the MCP server runs. Tool calls render inline —
  * watching which tools fire on which files is how we test the agent.
@@ -69,8 +54,7 @@ export function ChatPanel({
   onOpenConcept: (path: string) => void;
 }) {
   const [input, setInput] = useState("");
-  const [provider, setProvider] = useState<string | undefined>(undefined);
-  const [model, setModel] = useState<string | undefined>(undefined);
+  const [model, setModel] = useState("");
   const [historyNotice, setHistoryNotice] = useState<string | null>(null);
   const [pendingAdd, setPendingAdd] = useState<PendingAdd | null>(null);
   const pendingAddRef = useRef<PendingAdd | null>(null);
@@ -79,29 +63,15 @@ export function ChatPanel({
   const lastSubmittedInput = useRef("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const limits = config?.chat ?? DEFAULT_CHAT_LIMITS;
-  const activeProvider = provider ?? config?.defaultProvider;
-  // Prefer the provider's allowlist only — never borrow another provider's defaultModel
-  // (e.g. openrouter's qwen id must not be sent when switching to llamacpp auto-discover).
-  const modelOptions = useMemo(() => {
-    if (!activeProvider) return [] as string[];
-    return config?.modelsByProvider?.[activeProvider] ?? [];
-  }, [activeProvider, config?.modelsByProvider]);
-
-  const activeModel =
-    model ??
-    (activeProvider === config?.defaultProvider ? config?.defaultModel : undefined) ??
-    modelOptions[0];
+  const modelOptions = config?.models ?? [];
 
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
         api: "/api/chat",
         headers: () => authHeaders(),
-        // Omit model when undefined so llamacpp/local can auto-discover.
-        body: () => ({
-          provider: activeProvider,
-          ...(activeModel ? { model: activeModel } : {}),
-        }),
+        // Omit model when empty so the server uses LLM_MODEL / auto-discover.
+        body: () => ({ model: model || undefined }),
         prepareSendMessagesRequest: ({ id, messages, body, trigger, messageId }) => {
           const prepared = prepareChatMessages(messages, limits);
           const requestBody = {
@@ -126,7 +96,7 @@ export function ChatPanel({
           return { body: requestBody };
         },
       }),
-    [limits, activeProvider, activeModel]
+    [limits, model]
   );
   const {
     messages,
@@ -152,14 +122,15 @@ export function ChatPanel({
   const resetting = pendingAdd !== null;
 
   useEffect(() => {
-    if (modelOptions.length === 0) {
-      if (model !== undefined) setModel(undefined);
+    if (modelOptions.length === 0) return;
+    if (!model) {
+      setModel(config?.model && modelOptions.includes(config.model) ? config.model : modelOptions[0]);
       return;
     }
-    if (model && !modelOptions.includes(model)) {
+    if (!modelOptions.includes(model)) {
       setModel(modelOptions[0]);
     }
-  }, [model, modelOptions]);
+  }, [model, modelOptions, config?.model]);
 
   function queueAdd(knowledge: string) {
     addEpochRef.current += 1;
@@ -215,42 +186,20 @@ export function ChatPanel({
         <span className="shrink-0 text-sm font-semibold text-zinc-300">Agent chat</span>
         {config && (
           <div className="flex min-w-0 items-center gap-2">
-            <select
-              value={activeProvider ?? ""}
-              disabled={busy || resetting}
-              aria-label="Provider"
-              onChange={(e) => {
-                const nextProvider = e.target.value;
-                setProvider(nextProvider);
-                const nextModels = config.modelsByProvider?.[nextProvider] ?? [];
-                if (nextModels.length === 0) {
-                  setModel(undefined);
-                  return;
-                }
-                const preferred =
-                  nextProvider === config.defaultProvider
-                    ? config.defaultModel
-                    : nextModels[0];
-                setModel(
-                  preferred && nextModels.includes(preferred) ? preferred : nextModels[0]
-                );
-              }}
-              className="rounded border border-zinc-700 bg-zinc-900 px-1.5 py-1 text-xs text-zinc-300 disabled:opacity-50"
-            >
-              {config.providers.map((p) => (
-                <option key={p} value={p}>
-                  {formatProviderLabel(p)}
-                </option>
-              ))}
-            </select>
+            {config.fallbackConfigured && (
+              <span
+                title="Fallback model configured"
+                className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400"
+              />
+            )}
             {modelOptions.length > 0 ? (
               <select
-                value={activeModel ?? ""}
+                value={model}
                 disabled={busy || resetting || modelOptions.length <= 1}
                 onChange={(e) => setModel(e.target.value)}
-                title={activeModel}
+                title={model || config.model}
                 aria-label="Model"
-                className="max-w-[11rem] truncate rounded border border-zinc-700 bg-zinc-900 px-1.5 py-1 text-xs text-zinc-300 disabled:opacity-50 sm:max-w-[14rem]"
+                className="max-w-[14rem] truncate rounded border border-zinc-700 bg-zinc-900 px-1.5 py-1 text-xs text-zinc-300 disabled:opacity-50"
               >
                 {modelOptions.map((m) => (
                   <option key={m} value={m} title={m}>
@@ -259,14 +208,15 @@ export function ChatPanel({
                 ))}
               </select>
             ) : (
-              activeProvider === "llamacpp" && (
-                <span
-                  className="rounded border border-zinc-800 bg-zinc-950 px-1.5 py-1 text-xs text-zinc-500"
-                  title="Auto-discovered from llama-server"
-                >
-                  auto
-                </span>
-              )
+              <input
+                type="text"
+                value={model}
+                disabled={busy || resetting}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder={config.model || "model (optional)"}
+                aria-label="Model"
+                className="w-40 rounded border border-zinc-700 bg-zinc-900 px-1.5 py-1 text-xs text-zinc-300 placeholder:text-zinc-600 disabled:opacity-50"
+              />
             )}
           </div>
         )}

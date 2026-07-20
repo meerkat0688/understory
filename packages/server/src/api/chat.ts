@@ -11,12 +11,10 @@ import {
   streamChat,
   trimModelMessages,
   type KnowledgeBase,
-  type ProviderName,
 } from "@understory/core";
 
 interface ChatBody {
   messages: UIMessage[];
-  provider?: ProviderName;
   model?: string;
 }
 
@@ -46,11 +44,11 @@ export function chatRouter(kb: KnowledgeBase): Router {
         return;
       }
 
-      const { provider, model } = req.body as ChatBody;
+      const { model } = req.body as ChatBody;
       try {
         const converted = await convertToModelMessages(validation.data);
         const trimmed = trimModelMessages(converted, historyConfig);
-        const { result } = await streamChat(kb, trimmed.messages, { provider, model });
+        const { result } = await streamChat(kb, trimmed.messages, { model });
         // OpenRouter bills per model step; sum costs across tool-loop steps.
         let providerCostUsd = 0;
         let sawProviderCost = false;
@@ -123,7 +121,7 @@ function publicStreamError(error: unknown): string {
   if (isContentFilterError(error)) {
     return (
       "The upstream model provider blocked this response as inappropriate content. " +
-      "Try a different model/provider, or rephrase and retry."
+      "Try a different model, or rephrase and retry."
     );
   }
   return "The model provider could not complete this request.";
