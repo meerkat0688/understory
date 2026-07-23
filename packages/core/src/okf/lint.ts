@@ -1,5 +1,5 @@
 import type { Bundle } from "./bundle.js";
-import { scanGraph } from "./graph.js";
+import { scanGraph, type GraphScan } from "./graph.js";
 
 export interface LintFinding {
   path: string;
@@ -25,22 +25,25 @@ export interface LintReport {
   healthy: boolean;
 }
 
+/** Shared lint projection for bundle scans and BundleIndex snapshots. */
+export function lintReportFromScan(scan: GraphScan): LintReport {
+  const orphans: LintFinding[] = scan.nodes
+    .filter((n) => (scan.inbound.get(n.path) ?? 0) === 0)
+    .map((n) => ({ path: n.path, type: n.type, title: n.title }));
+
+  return {
+    conceptCount: scan.nodes.length,
+    linkCount: scan.edges.length,
+    orphans,
+    brokenLinks: scan.brokenLinks,
+    healthy: orphans.length === 0 && scan.brokenLinks.length === 0,
+  };
+}
+
 /**
  * Graph health check (deterministic, no LLM) — orphans + broken links,
  * Karpathy's anti-drift lint. Derived from the shared graph scan.
  */
 export async function lintBundle(bundle: Bundle): Promise<LintReport> {
-  const { nodes, edges, brokenLinks, inbound } = await scanGraph(bundle);
-
-  const orphans: LintFinding[] = nodes
-    .filter((n) => (inbound.get(n.path) ?? 0) === 0)
-    .map((n) => ({ path: n.path, type: n.type, title: n.title }));
-
-  return {
-    conceptCount: nodes.length,
-    linkCount: edges.length,
-    orphans,
-    brokenLinks,
-    healthy: orphans.length === 0 && brokenLinks.length === 0,
-  };
+  return lintReportFromScan(await scanGraph(bundle));
 }

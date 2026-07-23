@@ -1,12 +1,12 @@
 import path from "node:path";
 import { simpleGit, type SimpleGit } from "simple-git";
 import { Bundle } from "./bundle.js";
+import { BundleIndex } from "./bundle-index.js";
 import { regenerateIndexChain } from "./indexer.js";
 import { appendLog, readLog } from "./logger.js";
-import { searchBundle, listTypes, type SearchOptions } from "./search.js";
-import { validateBundle } from "./validate.js";
-import { lintBundle, type LintReport } from "./lint.js";
-import { buildGraph, type GraphData } from "./graph.js";
+import type { SearchOptions } from "./search.js";
+import type { LintReport } from "./lint.js";
+import type { GraphData } from "./graph.js";
 import type {
   Concept,
   ConceptFrontmatter,
@@ -29,30 +29,33 @@ export interface KnowledgeBaseOptions {
  */
 export class KnowledgeBase {
   readonly bundle: Bundle;
+  private readonly index: BundleIndex;
   private readonly git: SimpleGit | null;
   private mutationQueue: Promise<unknown> = Promise.resolve();
 
   constructor(bundleRoot: string, private readonly options: KnowledgeBaseOptions = {}) {
     this.bundle = new Bundle(bundleRoot);
+    this.index = new BundleIndex(this.bundle);
     this.git = options.gitAutocommit ? simpleGit(this.bundle.root) : null;
   }
 
-  // ── Reads (no queue) ────────────────────────────────────────────────
+  // ── Reads (auto-reconcile via BundleIndex; no mutation queue) ───────
 
+  /** Single-file read — always from disk (not the snapshot). */
   readConcept(conceptPath: string): Promise<Concept> {
     return this.bundle.readConcept(conceptPath);
   }
 
   listTree(): Promise<TreeNode> {
-    return this.bundle.listTree();
+    return this.index.listTree();
   }
 
   search(query: string, options?: SearchOptions): Promise<SearchHit[]> {
-    return searchBundle(this.bundle, query, options);
+    return this.index.search(query, options);
   }
 
   listTypes(): Promise<string[]> {
-    return listTypes(this.bundle);
+    return this.index.listTypes();
   }
 
   readLog(): Promise<LogEntry[]> {
@@ -60,17 +63,27 @@ export class KnowledgeBase {
   }
 
   validate(): Promise<ConformanceReport> {
-    return validateBundle(this.bundle);
+    return this.index.validate();
   }
 
   /** Graph health: orphaned concepts + broken links (deterministic, no LLM). */
   lint(): Promise<LintReport> {
-    return lintBundle(this.bundle);
+    return this.index.lint();
   }
 
   /** Inter-concept link graph (nodes + edges) for visualization. */
   graph(): Promise<GraphData> {
-    return buildGraph(this.bundle);
+    return this.index.graph();
+  }
+
+  /** Force a full index rebuild from disk (path inventory + re-parse all). */
+  refresh(): Promise<void> {
+    return this.index.refresh().then(() => undefined);
+  }
+
+  /** Current snapshot version (0 before first ensureReady). */
+  getIndexVersion(): number {
+    return this.index.getIndexVersion();
   }
 
   // ── Mutations (serialized; auto index + log + optional commit) ──────
@@ -123,6 +136,8 @@ export class KnowledgeBase {
     await regenerateIndexChain(this.bundle, path.posix.dirname(conceptPath));
     const linked = `[${conceptPath.split("/").pop()}](${conceptPath})`;
     await appendLog(this.bundle, action, logSummary || `${action} of ${linked}.`);
+    // V1: full rebuild after mutation (no applyConceptDelta).
+    await this.index.refresh();
     if (this.git) {
       try {
         await this.git.add(".");

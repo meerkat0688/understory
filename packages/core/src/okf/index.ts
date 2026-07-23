@@ -9,4 +9,6 @@ export { lintBundle } from "./lint.js";
 export type { LintReport, LintFinding, BrokenLink } from "./lint.js";
 export { buildGraph, scanGraph } from "./graph.js";
 export type { GraphData, GraphNode, GraphEdge } from "./graph.js";
+export { extractOutboundLinks, eachOutboundLink } from "./links.js";
+export { collectTypesFromTree } from "./tree.js";
 export { KnowledgeBase, type KnowledgeBaseOptions } from "./knowledge-base.js";

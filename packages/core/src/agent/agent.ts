@@ -1,5 +1,5 @@
 import { generateText, streamText, stepCountIs, type LanguageModel, type ModelMessage } from "ai";
-import type { KnowledgeBase } from "../okf/index.js";
+import { collectTypesFromTree, type KnowledgeBase } from "../okf/index.js";
 import {
   canRetryMutationAfterError,
   createModel,
@@ -43,9 +43,20 @@ interface ResolvedAgentModel {
   modelChain: string[];
 }
 
+export async function buildPromptContext(
+  kb: KnowledgeBase,
+  mode: "query" | "mutate" | "chat"
+) {
+  const tree = await kb.listTree();
+  return {
+    existingTypes: collectTypesFromTree(tree),
+    treeSummary: formatTree(tree),
+    mode,
+  };
+}
+
 async function promptContext(kb: KnowledgeBase, mode: "query" | "mutate" | "chat") {
-  const [types, tree] = await Promise.all([kb.listTypes(), kb.listTree()]);
-  return { existingTypes: types, treeSummary: formatTree(tree), mode };
+  return buildPromptContext(kb, mode);
 }
 
 async function resolveAgentModel(

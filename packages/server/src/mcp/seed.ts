@@ -1,5 +1,4 @@
-import type { KnowledgeBase } from "@understory/core";
-import type { TreeNode } from "@understory/core";
+import { collectTypesFromTree, type KnowledgeBase, type TreeNode } from "@understory/core";
 
 const MAX_SEED_CHARS = 3000;
 const MAX_DESCRIPTIONS_PER_SEGMENT = 10;
@@ -15,7 +14,8 @@ const MAX_DESCRIPTIONS_PER_SEGMENT = 10;
  * igniting the "memory might know this" instinct.
  */
 export async function buildSeedMemory(kb: KnowledgeBase): Promise<string> {
-  const [tree, types, log] = await Promise.all([kb.listTree(), kb.listTypes(), kb.readLog()]);
+  const [tree, log] = await Promise.all([kb.listTree(), kb.readLog()]);
+  const types = collectTypesFromTree(tree);
 
   const segments: string[] = [];
   const rootDescriptions: string[] = [];
