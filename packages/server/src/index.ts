@@ -56,8 +56,6 @@ app.use(
     methods: ["GET", "POST", "DELETE", "OPTIONS"],
   })
 );
-app.use(express.json({ limit: "4mb" }));
-
 // Optional bearer auth (issue #1): protects the memory (/mcp + /api) when
 // AUTH_TOKEN is set. Static web UI stays open and prompts for the token.
 const authToken = process.env.AUTH_TOKEN;
@@ -68,9 +66,12 @@ if (authToken) {
   console.log("[understory] auth: disabled (set AUTH_TOKEN to protect /mcp and /api)");
 }
 
+// Chat parses its own body with CHAT_MAX_REQUEST_BYTES — must run before the
+// global 4mb parser so /api/chat and /api/chat/ are not capped early.
+app.use("/api", chatRouter(kb));
+app.use(express.json({ limit: "4mb" }));
 app.use("/mcp", mcpRouter(kb));
 app.use("/api", browseRouter(kb));
-app.use("/api", chatRouter(kb));
 
 // Serve the built web UI in production (single container), with SPA fallback.
 const webDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../web/dist");
